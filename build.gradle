@@ -42,7 +42,7 @@ dependencies {
 }
 
 version = "0.1"
-group = "org.neo4j.procs.asyncmerge"
+group = "org.neo4j.asyncaction"
 
 /*shadowJar {
   dependencies {

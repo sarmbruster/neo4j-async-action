@@ -1,0 +1,59 @@
+plugins {
+    id 'groovy'
+    //id 'com.github.johnrengelman.shadow' version '1.2.3'
+    id 'idea'
+}
+
+idea {
+    project {
+        ext.jdkName = '1.8'
+        ext.languageLevel = '1.8'
+    }
+}
+
+sourceCompatibility=JavaVersion.VERSION_1_8
+targetCompatibility=JavaVersion.VERSION_1_8
+
+repositories {
+    mavenCentral()
+    //maven { url "http://m2.neo4j.org/content/repositories/releases/" }
+    maven { url "https://raw.github.com/neo4j-contrib/m2/master/releases" }
+}
+
+ext {
+    neo4jVersion = "3.1.0"
+//    neo4jClientVersion = "1.0.0-M04"
+}
+
+dependencies {
+    compile group: 'org.neo4j', name: 'neo4j-kernel', version: neo4jVersion
+    compile group: 'org.neo4j', name: 'neo4j-lucene-index', version: neo4jVersion
+//    compile group: 'org.neo4j', name: 'server-api', version: neo4jVersion
+//    compile "org.slf4j:slf4j-api:1.7.20"
+//    compile group: 'org.neo4j.app', name: 'neo4j-server', version: neo4jVersion
+
+    testCompile 'org.codehaus.groovy:groovy-all:2.4.6'
+    testCompile group: 'org.neo4j.contrib', name: 'neo4j-spock-extension', version: '0.8.0'
+//    testCompile "org.neo4j.driver:neo4j-java-driver:$neo4jClientVersion"
+
+    //testCompile group: 'org.neo4j', name: 'neo4j-graphviz', version: neo4jVersion
+
+//    runtime 'org.glassfish.jersey.media:jersey-media-json-jackson:2.13'
+}
+
+version = "0.1"
+group = "org.neo4j.procs.asyncmerge"
+
+/*shadowJar {
+  dependencies {
+    include(dependency('org.codehaus.groovy:groovy-all'))
+    include(dependency('org.ccil.cowan.tagsoup:tagsoup'))
+  }
+}*/
+
+test {
+    systemProperties 'user.language': 'en', 'user.country': 'US'
+    testLogging {
+        exceptionFormat = 'full'
+    }
+}

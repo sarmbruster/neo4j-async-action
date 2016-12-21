@@ -31,7 +31,7 @@ RETURN a,b""".cypher()
 
         def asyncQueueHolder = ((GraphDatabaseAPI)graphDatabaseService).dependencyResolver.resolveDependency(AsyncQueueHolder)
         asyncQueueHolder.stop() // send poison
-        sleep 10
+        sleep 10+AsyncQueueHolder.INBOUND_QUEUE_SCAN_INTERVAL
 
         userLogProvider.print(System.out)
 
@@ -91,7 +91,7 @@ MERGE (rnd)-[:KNOWS]->(dense)""".cypher()
 
         def asyncQueueHolder = ((GraphDatabaseAPI)graphDatabaseService).dependencyResolver.resolveDependency(AsyncQueueHolder)
         asyncQueueHolder.stop() // send poison
-        sleep 10
+        sleep 10 + AsyncQueueHolder.INBOUND_QUEUE_SCAN_INTERVAL
         userLogProvider.print(System.out)
 
         then:
@@ -126,7 +126,7 @@ MERGE (rnd)-[:KNOWS]->(dense)""".cypher()
 
         def asyncQueueHolder = ((GraphDatabaseAPI)graphDatabaseService).dependencyResolver.resolveDependency(AsyncQueueHolder)
         asyncQueueHolder.stop() // send poison
-        sleep 10
+        sleep 10+AsyncQueueHolder.INBOUND_QUEUE_SCAN_INTERVAL
         userLogProvider.print(System.out)
 
         then:

@@ -39,7 +39,7 @@ public class AsyncQueueHolder extends LifecycleAdapter {
     /**
      * scan inbound queue for finished transactions every x milliseconds
      */
-    public static final int INBOUND_QUEUE_SCAN_INTERVAL = 10;
+    public static final int INBOUND_QUEUE_SCAN_INTERVAL = 100;
 
     private final LogService logService;
     private final GraphDatabaseService graphDatabaseService;

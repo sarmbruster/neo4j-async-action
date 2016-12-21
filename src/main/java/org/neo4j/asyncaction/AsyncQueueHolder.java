@@ -97,7 +97,7 @@ public class AsyncQueueHolder extends LifecycleAdapter {
                         if (tx!=null) {
                             long now = new Date().getTime();
                             if ((opsCount >= MAX_OPERATIONS_PER_TRANSACTION) || (now-timestamp > MAX_DURATION_PER_TRANSACTION)) { //either 1000 ops or 1000millis
-                                log.info("rolling over transaction, opscount " + opsCount + " duration " + (now-timestamp));
+                                log.info("rolling over transaction, opscount " + opsCount + " duration " + (now-timestamp) + " queuesize " + queue.remainingCapacity());
                                 tx.success();
                                 tx.close();
                                 tx = null;

@@ -16,6 +16,7 @@ targetCompatibility=JavaVersion.VERSION_1_8
 
 repositories {
     mavenCentral()
+    mavenLocal()
     //maven { url "http://m2.neo4j.org/content/repositories/releases/" }
     maven { url "https://raw.github.com/neo4j-contrib/m2/master/releases" }
 }
@@ -33,7 +34,7 @@ dependencies {
 //    compile group: 'org.neo4j.app', name: 'neo4j-server', version: neo4jVersion
 
     testCompile 'org.codehaus.groovy:groovy-all:2.4.6'
-    testCompile group: 'org.neo4j.contrib', name: 'neo4j-spock-extension', version: '0.8.0'
+    testCompile group: 'org.neo4j.contrib', name: 'neo4j-spock-extension', version: '0.8.3'
 //    testCompile "org.neo4j.driver:neo4j-java-driver:$neo4jClientVersion"
 
     //testCompile group: 'org.neo4j', name: 'neo4j-graphviz', version: neo4jVersion

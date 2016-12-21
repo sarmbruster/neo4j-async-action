@@ -1,9 +1,6 @@
 package org.neo4j.asyncaction;
 
-import org.neo4j.graphdb.GraphDatabaseService;
-import org.neo4j.graphdb.Node;
-import org.neo4j.graphdb.RelationshipType;
-import org.neo4j.graphdb.Transaction;
+import org.neo4j.graphdb.*;
 import org.neo4j.kernel.api.KernelTransaction;
 import org.neo4j.kernel.impl.logging.LogService;
 import org.neo4j.kernel.lifecycle.LifecycleAdapter;
@@ -21,16 +18,38 @@ import static org.neo4j.asyncaction.AsyncQueueHolder.CreateRelationshipBean.POIS
  */
 public class AsyncQueueHolder extends LifecycleAdapter {
 
+    /**
+     * roll over transaction latest at this number of operations
+     */
+    public static final int MAX_OPERATIONS_PER_TRANSACTION = 10000;
+
+    /**
+     * roll over transaction latest after this duration in milliseconds
+     */
+    public static final int MAX_DURATION_PER_TRANSACTION = 1000; // millis
+
+    /**
+     * timeout for adding to inbound queue. A warning is spit out if this timeout is reached and afterwards we block.
+     */
+    public static final int INBOUND_QUEUE_ADD_TIMEOUT = 100;
+
+
+    public static final int INBOUND_QUEUE_CAPACITY = 100000;
+
+    /**
+     * scan inbound queue for finished transactions every x milliseconds
+     */
+    public static final int INBOUND_QUEUE_SCAN_INTERVAL = 10;
+
     private final LogService logService;
     private final GraphDatabaseService graphDatabaseService;
+    private final Log log;
 
     // contains CreateRelationshipBean instance with active transaction
-    private BlockingQueue<CreateRelationshipBean> inboundQueue = new LinkedBlockingQueue<>(5);
+    private BlockingQueue<CreateRelationshipBean> inboundQueue = new LinkedBlockingQueue<>(INBOUND_QUEUE_CAPACITY);
 
     // contains CreateRelationshipBean that are supposed to be processed, their originating transactions have been closed
-    private BlockingQueue<CreateRelationshipBean> outboundQueue = new LinkedBlockingQueue<>(5);
-
-    private Log log;
+    private BlockingQueue<CreateRelationshipBean> outboundQueue = new LinkedBlockingQueue<>(MAX_OPERATIONS_PER_TRANSACTION);
 
     public AsyncQueueHolder(GraphDatabaseService graphDatabaseService, LogService logService) {
         this.logService = logService;
@@ -41,59 +60,44 @@ public class AsyncQueueHolder extends LifecycleAdapter {
     public void add(Node startNode, Node endNode, String relationshipType, KernelTransaction kernelTransaction) {
         try {
             CreateRelationshipBean createRelationshipBean = new CreateRelationshipBean(startNode, endNode, relationshipType, kernelTransaction);
-            log.info("offering to queue " + createRelationshipBean);
-            System.out.println("offering to queue " + createRelationshipBean);
-            if (!inboundQueue.offer(createRelationshipBean, 100, TimeUnit.MILLISECONDS)) {
-                System.out.println("timeout reached when adding to queue");
-                log.error("timeout reached when adding to queue");
+            log.debug("offering to queue " + createRelationshipBean);
+            if (!inboundQueue.offer(createRelationshipBean, INBOUND_QUEUE_ADD_TIMEOUT, TimeUnit.MILLISECONDS)) {
+                log.warn("timeout reached when adding to queue");
+                inboundQueue.put(createRelationshipBean);
             };
         } catch (InterruptedException e) {
             throw new RuntimeException(e);
         }
-
     }
 
     @Override
     public void start() throws Throwable {
-        new Thread(() -> {
-            try {
-                while (true) {
-                    for (CreateRelationshipBean bean : inboundQueue) {
-                        if (bean.equals(POISON)) {
-                            return;
-                        }
-                        if (!bean.getKernelTransaction().isOpen()) {
-                            inboundQueue.remove(bean);
-                            outboundQueue.put(bean);
-                        }
-                    }
-                    Thread.sleep(100);
-                }
-            } catch (Exception e) {
-                System.out.println("oops" + e);
-                log.error("oops", e);
-                throw new RuntimeException(e);
-            }
-        }).start();
+        startThreadForScanningInbound();
+        startThreadToProcessOutbound();
+    }
 
+    private void startThreadToProcessOutbound() {
         new Thread(() -> {
-            try {
-                Transaction tx = null;
-                int opsCount = 0;
-                long timestamp = -1;
+            Transaction tx = null;
+            int opsCount = 0;
+            long timestamp = -1;
 
+            try {
                 while (true) {
                     CreateRelationshipBean command = outboundQueue.poll(100, TimeUnit.MILLISECONDS);
                     if (POISON.equals(command)) {
-                        System.out.println("got poison -> terminating");
-                        tx.success();
-                        tx.close();
+                        if (tx!=null) {
+                            long now = new Date().getTime();
+                            log.info("got poison -> terminating, opscount " + opsCount + " duration " + (now-timestamp));
+                            tx.success();
+                            tx.close();
+                        }
                         return; // finish worker thread
                     } else {
                         if (tx!=null) {
                             long now = new Date().getTime();
-                            if ((opsCount > 1000) || (now-timestamp > 1000)) { //either 1000 ops or 1000millis
-                                System.out.printf("rolling over transaction " );
+                            if ((opsCount >= MAX_OPERATIONS_PER_TRANSACTION) || (now-timestamp > MAX_DURATION_PER_TRANSACTION)) { //either 1000 ops or 1000millis
+                                log.info("rolling over transaction, opscount " + opsCount + " duration " + (now-timestamp));
                                 tx.success();
                                 tx.close();
                                 tx = null;
@@ -105,19 +109,55 @@ public class AsyncQueueHolder extends LifecycleAdapter {
                                 tx = graphDatabaseService.beginTx();
                                 opsCount = 0;
                                 timestamp = new Date().getTime();
-                                System.out.printf("new tx " + timestamp);
+                                log.info("new tx " + timestamp);
                             }
-                            command.getStartNode().createRelationshipTo(command.getEndNode(), RelationshipType.withName(command.getRelationshipType()));
-                            opsCount++;
+                            try {
+
+                                command.getStartNode().createRelationshipTo(command.getEndNode(), RelationshipType.withName(command.getRelationshipType()));
+                                opsCount++;
+                                log.debug("processed " + command + " opscount=" + opsCount);
+                            } catch (NotFoundException e) {
+                                log.error("oops", e);
+                            }
                         }
                     }
                 }
             } catch (Exception e) {
-                System.out.println("oops " + e);
+                if (tx!=null) {
+                    tx.failure();
+                    tx.close();
+                }
                 log.error("oops", e);
                 throw new RuntimeException(e);
             }
+        }).start();
+    }
 
+    private void startThreadForScanningInbound() {
+        new Thread(() -> {
+            try {
+                int opsCount = 0;
+                while (true) {
+                    for (CreateRelationshipBean bean : inboundQueue) {
+                        if (bean.equals(POISON)) {
+                            log.info("got poison -> adding to outbound");
+                            outboundQueue.put(POISON);
+                            return;
+                        }
+                        if (!bean.getKernelTransaction().isOpen()) {
+                            inboundQueue.remove(bean);
+                            outboundQueue.put(bean);
+                            opsCount++;
+                            log.debug("moving " + bean + " to outbound " + opsCount);
+                        }
+                    }
+//                    log.info("inbound: opscount " + opsCount + " size " + inboundQueue.size());
+                    Thread.sleep(INBOUND_QUEUE_SCAN_INTERVAL);
+                }
+            } catch (Exception e) {
+                log.error("oops", e);
+                throw new RuntimeException(e);
+            }
         }).start();
     }
 

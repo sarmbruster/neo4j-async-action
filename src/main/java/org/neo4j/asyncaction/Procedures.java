@@ -4,11 +4,7 @@ import org.neo4j.graphdb.Node;
 import org.neo4j.graphdb.RelationshipType;
 import org.neo4j.kernel.api.KernelTransaction;
 import org.neo4j.kernel.internal.GraphDatabaseAPI;
-import org.neo4j.procedure.Context;
-import org.neo4j.procedure.Mode;
-import org.neo4j.procedure.Name;
-import org.neo4j.procedure.Procedure;
-
+import org.neo4j.procedure.*;
 
 /**
  * @author Stefan Armbruster
@@ -22,6 +18,7 @@ public class Procedures {
     public KernelTransaction kernelTransaction;
 
     @Procedure(name = "async.createRelationship", mode = Mode.WRITE)
+    @Description("create relationships asynchronously to prevent locking issues")
     public void asyncCreateRelationship(
             @Name("startNode") Node startNode,
             @Name("endNode") Node endNode,

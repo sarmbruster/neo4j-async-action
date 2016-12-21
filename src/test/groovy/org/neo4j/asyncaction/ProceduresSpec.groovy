@@ -60,7 +60,7 @@ MERGE (rnd)-[:KNOWS]->(dense)""".cypher()
         then:
         executorService.awaitTermination(10, SECONDS)
         "match (p:Person) return count(p) as c".cypher()[0].c < 1000
-        "match (p:Person{id:'dense'}) return size((p)<-[:KNOWS]-()) as c".cypher()[0].c == 1000 //in (2..1000)
+        "match (p:Person{id:'dense'}) return size((p)<-[:KNOWS]-()) as c".cypher()[0].c < 1000
 
     }
 
@@ -96,7 +96,41 @@ MERGE (rnd)-[:KNOWS]->(dense)""".cypher()
 
         then:
         "match (p:Person) return count(p) as c".cypher()[0].c < 1000
-        "match (p:Person{id:'dense'}) return size((p)<-[:KNOWS]-()) as c".cypher()[0].c == 1000 //in (2..1000)
+        "match (p:Person{id:'dense'}) return size((p)<-[:KNOWS]-()) as c".cypher()[0].c > 900
 
+    }
+
+    def "test connecting to dense node using async merge"() {
+        setup:
+        "create index on :Person(id)".cypher()
+        "MERGE (dense:Person{id:'dense'})".cypher()
+        ExecutorService executorService = Executors.newFixedThreadPool(8)
+
+        when:
+        (1..1000).each {
+            executorService.submit {
+                try {
+                    graphDatabaseService.execute("""MERGE (dense:Person{id:'dense'}) 
+    MERGE (rnd:Person{id:'person_' +toInt(rand()*1000)})
+    WITH dense, rnd 
+    CALL async.mergeRelationship(rnd, dense, 'KNOWS') 
+    RETURN dense, rnd""")
+                } catch (Exception e) {
+                    println e
+                    throw new RuntimeException(e)
+                }
+            }
+        }
+        executorService.shutdown()
+        executorService.awaitTermination(10, SECONDS)
+
+        def asyncQueueHolder = ((GraphDatabaseAPI)graphDatabaseService).dependencyResolver.resolveDependency(AsyncQueueHolder)
+        asyncQueueHolder.stop() // send poison
+        sleep 10
+        userLogProvider.print(System.out)
+
+        then:
+        "match (p:Person) return count(p) as c".cypher()[0].c < 1000
+        "match (p:Person{id:'dense'}) return size((p)<-[:KNOWS]-()) as c".cypher()[0].c < 1000
     }
 }

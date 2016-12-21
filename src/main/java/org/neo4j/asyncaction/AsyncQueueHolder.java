@@ -1,7 +1,7 @@
 package org.neo4j.asyncaction;
 
+import org.neo4j.asyncaction.command.GraphCommand;
 import org.neo4j.graphdb.*;
-import org.neo4j.kernel.api.KernelTransaction;
 import org.neo4j.kernel.impl.logging.LogService;
 import org.neo4j.kernel.lifecycle.LifecycleAdapter;
 import org.neo4j.logging.Log;
@@ -11,7 +11,7 @@ import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 
-import static org.neo4j.asyncaction.AsyncQueueHolder.CreateRelationshipBean.POISON;
+import static org.neo4j.asyncaction.command.PoisonCommand.POISON;
 
 /**
  * @author Stefan Armbruster
@@ -45,11 +45,11 @@ public class AsyncQueueHolder extends LifecycleAdapter {
     private final GraphDatabaseService graphDatabaseService;
     private final Log log;
 
-    // contains CreateRelationshipBean instance with active transaction
-    private BlockingQueue<CreateRelationshipBean> inboundQueue = new LinkedBlockingQueue<>(INBOUND_QUEUE_CAPACITY);
+    // contains GraphCommand instance with active transaction
+    private BlockingQueue<GraphCommand> inboundQueue = new LinkedBlockingQueue<>(INBOUND_QUEUE_CAPACITY);
 
-    // contains CreateRelationshipBean that are supposed to be processed, their originating transactions have been closed
-    private BlockingQueue<CreateRelationshipBean> outboundQueue = new LinkedBlockingQueue<>(MAX_OPERATIONS_PER_TRANSACTION);
+    // contains GraphCommand that are supposed to be processed, their originating transactions have been closed
+    private BlockingQueue<GraphCommand> outboundQueue = new LinkedBlockingQueue<>(MAX_OPERATIONS_PER_TRANSACTION);
 
     public AsyncQueueHolder(GraphDatabaseService graphDatabaseService, LogService logService) {
         this.logService = logService;
@@ -57,14 +57,14 @@ public class AsyncQueueHolder extends LifecycleAdapter {
         this.graphDatabaseService = graphDatabaseService;
     }
 
-    public void add(Node startNode, Node endNode, String relationshipType, KernelTransaction kernelTransaction) {
+    public void add(GraphCommand command) {
         try {
-            CreateRelationshipBean createRelationshipBean = new CreateRelationshipBean(startNode, endNode, relationshipType, kernelTransaction);
-            log.debug("offering to queue " + createRelationshipBean);
-            if (!inboundQueue.offer(createRelationshipBean, INBOUND_QUEUE_ADD_TIMEOUT, TimeUnit.MILLISECONDS)) {
+            log.debug("offering to queue " + command);
+            if (!inboundQueue.offer(command, INBOUND_QUEUE_ADD_TIMEOUT, TimeUnit.MILLISECONDS)) {
                 log.warn("timeout reached when adding to queue");
-                inboundQueue.put(createRelationshipBean);
-            };
+                inboundQueue.put(command);
+            }
+            ;
         } catch (InterruptedException e) {
             throw new RuntimeException(e);
         }
@@ -84,7 +84,7 @@ public class AsyncQueueHolder extends LifecycleAdapter {
 
             try {
                 while (true) {
-                    CreateRelationshipBean command = outboundQueue.poll(100, TimeUnit.MILLISECONDS);
+                    GraphCommand command = outboundQueue.poll(100, TimeUnit.MILLISECONDS);
                     if (POISON.equals(command)) {
                         if (tx!=null) {
                             long now = new Date().getTime();
@@ -105,20 +105,15 @@ public class AsyncQueueHolder extends LifecycleAdapter {
                         }
 
                         if (command != null) {
-                            if (tx == null)  {
+                            if (tx == null) {
                                 tx = graphDatabaseService.beginTx();
                                 opsCount = 0;
                                 timestamp = new Date().getTime();
                                 log.info("new tx " + timestamp);
                             }
-                            try {
-
-                                command.getStartNode().createRelationshipTo(command.getEndNode(), RelationshipType.withName(command.getRelationshipType()));
-                                opsCount++;
-                                log.debug("processed " + command + " opscount=" + opsCount);
-                            } catch (NotFoundException e) {
-                                log.error("oops", e);
-                            }
+                            command.run(graphDatabaseService, log);
+                            opsCount++;
+                            log.debug("processed " + command + " opscount=" + opsCount);
                         }
                     }
                 }
@@ -138,17 +133,17 @@ public class AsyncQueueHolder extends LifecycleAdapter {
             try {
                 int opsCount = 0;
                 while (true) {
-                    for (CreateRelationshipBean bean : inboundQueue) {
-                        if (bean.equals(POISON)) {
+                    for (GraphCommand command : inboundQueue) {
+                        if (command.equals(POISON)) {
                             log.info("got poison -> adding to outbound");
                             outboundQueue.put(POISON);
                             return;
                         }
-                        if (!bean.getKernelTransaction().isOpen()) {
-                            inboundQueue.remove(bean);
-                            outboundQueue.put(bean);
+                        if (!command.getKernelTransaction().isOpen()) {
+                            inboundQueue.remove(command);
+                            outboundQueue.put(command);
                             opsCount++;
-                            log.debug("moving " + bean + " to outbound " + opsCount);
+                            log.debug("moving " + command + " to outbound " + opsCount);
                         }
                     }
 //                    log.info("inbound: opscount " + opsCount + " size " + inboundQueue.size());
@@ -166,65 +161,4 @@ public class AsyncQueueHolder extends LifecycleAdapter {
         inboundQueue.put(POISON);
     }
 
-    public static class CreateRelationshipBean {
-
-        public static CreateRelationshipBean POISON = new CreateRelationshipBean(null, null, null, null);
-
-        private final Node startNode;
-        private final Node endNode;
-        private final String relationshipType;
-        private final KernelTransaction kernelTransaction;
-
-        public CreateRelationshipBean(Node startNode, Node endNode, String relationshipType, KernelTransaction kernelTransaction) {
-            this.startNode = startNode;
-            this.endNode = endNode;
-            this.relationshipType = relationshipType;
-            this.kernelTransaction = kernelTransaction;
-        }
-
-        public Node getStartNode() {
-            return startNode;
-        }
-
-        public Node getEndNode() {
-            return endNode;
-        }
-
-        public String getRelationshipType() {
-            return relationshipType;
-        }
-
-        public KernelTransaction getKernelTransaction() {
-            return kernelTransaction;
-        }
-
-        @Override
-        public boolean equals(Object o) {
-            if (this == o) return true;
-            if (o == null || getClass() != o.getClass()) return false;
-
-            CreateRelationshipBean that = (CreateRelationshipBean) o;
-
-            if (startNode != null ? !startNode.equals(that.startNode) : that.startNode != null) return false;
-            if (endNode != null ? !endNode.equals(that.endNode) : that.endNode != null) return false;
-            return relationshipType != null ? relationshipType.equals(that.relationshipType) : that.relationshipType == null;
-        }
-
-        @Override
-        public int hashCode() {
-            int result = startNode != null ? startNode.hashCode() : 0;
-            result = 31 * result + (endNode != null ? endNode.hashCode() : 0);
-            result = 31 * result + (relationshipType != null ? relationshipType.hashCode() : 0);
-            return result;
-        }
-
-        @Override
-        public String toString() {
-            if (this.equals(POISON) ) {
-                return "[POISON]";
-            } else {
-                return String.format("(%d)-[:%s]->(%d)", startNode.getId(), relationshipType, endNode.getId() );
-            }
-        }
-    }
 }

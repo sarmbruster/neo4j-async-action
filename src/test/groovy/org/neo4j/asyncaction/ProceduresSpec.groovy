@@ -21,6 +21,7 @@ class ProceduresSpec extends Specification {
     @Delegate(interfaces = false)
     Neo4jResource neo4j = new Neo4jResource(userLogProvider: new AssertableLogProvider(), internalLogProvider: new AssertableLogProvider())
 
+/*
     def "should async creation of relationships work"() {
         when:
         Result result = """CREATE (a), (b) 
@@ -76,6 +77,8 @@ MERGE (rnd)-[:KNOWS]->(dense)""".cypher()
             executorService.submit {
                 try {
                     graphDatabaseService.execute("""MERGE (dense:Person{id:'dense'}) 
+    WITH dense
+    CALL async.mergeNodeAndRel(dense, 'KNOWS', label, {props0})
     MERGE (rnd:Person{id:'person_' +toInt(rand()*1000)})
     WITH dense, rnd 
     CALL async.createRelationship(rnd, dense, 'KNOWS') 
@@ -114,7 +117,7 @@ MERGE (rnd)-[:KNOWS]->(dense)""".cypher()
     MERGE (rnd:Person{id:'person_' +toInt(rand()*1000)})
     WITH dense, rnd 
     CALL async.mergeRelationship(rnd, dense, 'KNOWS') 
-    RETURN dense, rnd""")
+    RETURN dense, rnd""").close()
                 } catch (Exception e) {
                     println e
                     throw new RuntimeException(e)
@@ -132,5 +135,40 @@ MERGE (rnd)-[:KNOWS]->(dense)""".cypher()
         then:
         "match (p:Person) return count(p) as c".cypher()[0].c < 1000
         "match (p:Person{id:'dense'}) return size((p)<-[:KNOWS]-()) as c".cypher()[0].c < 1000
+    }
+*/
+
+    def "test merge node and relationship async"() {
+        setup:
+        "create index on :Person(id)".cypher()
+        graphDatabaseService.execute("MERGE (dense:Person{id:'dense'})").close()
+        ExecutorService executorService = Executors.newFixedThreadPool(8)
+
+        when:
+        (1..100000).each {
+            executorService.submit {
+                try {
+                    def result = graphDatabaseService.execute("""MATCH (dense:Person{id:'dense'}) 
+    WITH dense 
+    CALL async.mergeNodeAndRelationship(dense, 'KNOWS', 'Person', 'id', 'person_' +toInt(rand()*1000) ) 
+    RETURN dense""")
+                } catch (Exception e) {
+                    println e
+                    throw new RuntimeException(e)
+                }
+            }
+        }
+        executorService.shutdown()
+        assert executorService.awaitTermination(10, SECONDS)
+
+        def asyncQueueHolder = ((GraphDatabaseAPI)graphDatabaseService).dependencyResolver.resolveDependency(AsyncQueueHolder)
+        asyncQueueHolder.stop() // send poison
+        sleep 100+AsyncQueueHolder.INBOUND_QUEUE_SCAN_INTERVAL
+        userLogProvider.print(System.out)
+
+        then:
+        "match (p:Person) return count(p) as c".cypher()[0].c < 1000
+        "match (p:Person{id:'dense'}) return size((p)<-[:KNOWS]-()) as c".cypher()[0].c < 1000
+
     }
 }

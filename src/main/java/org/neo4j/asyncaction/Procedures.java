@@ -1,9 +1,9 @@
 package org.neo4j.asyncaction;
 
 import org.neo4j.asyncaction.command.CreateRelationshipCommand;
+import org.neo4j.asyncaction.command.MergeNodeAndRelationshipCommand;
 import org.neo4j.asyncaction.command.MergeRelationshipCommand;
 import org.neo4j.graphdb.Node;
-import org.neo4j.graphdb.RelationshipType;
 import org.neo4j.kernel.api.KernelTransaction;
 import org.neo4j.kernel.internal.GraphDatabaseAPI;
 import org.neo4j.procedure.*;
@@ -38,4 +38,17 @@ public class Procedures {
         AsyncQueueHolder asyncQueueHolder = api.getDependencyResolver().resolveDependency(AsyncQueueHolder.class);
         asyncQueueHolder.add(new MergeRelationshipCommand(startNode, endNode, relationshipType, kernelTransaction));
     }
+
+    @Procedure(name ="async.mergeNodeAndRelationship", mode = Mode.WRITE)
+    @Description("merge node an relationship in separate thread")
+    public void asyncMergeNodeAndRelationship(
+            @Name("startNode") Node startNode,
+            @Name("relationshipType") String relationshipType,
+            @Name("label") String label,
+            @Name("nodeKey") String key,
+            @Name("nodeValue") String value ) {
+        AsyncQueueHolder asyncQueueHolder = api.getDependencyResolver().resolveDependency(AsyncQueueHolder.class);
+        asyncQueueHolder.add(new MergeNodeAndRelationshipCommand(startNode, relationshipType, label, key, value, kernelTransaction));
+    }
+
 }

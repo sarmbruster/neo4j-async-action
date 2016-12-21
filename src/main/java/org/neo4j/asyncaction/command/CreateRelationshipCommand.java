@@ -62,10 +62,6 @@ public class CreateRelationshipCommand extends GraphCommand {
 
     @Override
     public void run(GraphDatabaseService graphDatabaseService, Log log) {
-        try {
-            getStartNode().createRelationshipTo(getEndNode(), RelationshipType.withName(getRelationshipType()));
-        } catch (NotFoundException e) {
-            log.debug("oops" , e);
-        }
+        getStartNode().createRelationshipTo(getEndNode(), RelationshipType.withName(getRelationshipType()));
     }
 }

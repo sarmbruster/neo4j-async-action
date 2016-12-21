@@ -46,10 +46,10 @@ public class AsyncQueueHolder extends LifecycleAdapter {
     private final Log log;
 
     // contains GraphCommand instance with active transaction
-    private BlockingQueue<GraphCommand> inboundQueue = new LinkedBlockingQueue<>(INBOUND_QUEUE_CAPACITY);
+    private BlockingQueue<GraphCommand> queue = new LinkedBlockingQueue<>(INBOUND_QUEUE_CAPACITY);
 
     // contains GraphCommand that are supposed to be processed, their originating transactions have been closed
-    private BlockingQueue<GraphCommand> outboundQueue = new LinkedBlockingQueue<>(MAX_OPERATIONS_PER_TRANSACTION);
+//    private BlockingQueue<GraphCommand> outboundQueue = new LinkedBlockingQueue<>(MAX_OPERATIONS_PER_TRANSACTION);
 
     public AsyncQueueHolder(GraphDatabaseService graphDatabaseService, LogService logService) {
         this.logService = logService;
@@ -60,9 +60,9 @@ public class AsyncQueueHolder extends LifecycleAdapter {
     public void add(GraphCommand command) {
         try {
             log.debug("offering to queue " + command);
-            if (!inboundQueue.offer(command, INBOUND_QUEUE_ADD_TIMEOUT, TimeUnit.MILLISECONDS)) {
+            if (!queue.offer(command, INBOUND_QUEUE_ADD_TIMEOUT, TimeUnit.MILLISECONDS)) {
                 log.warn("timeout reached when adding to queue");
-                inboundQueue.put(command);
+                queue.put(command);
             }
             ;
         } catch (InterruptedException e) {
@@ -72,7 +72,7 @@ public class AsyncQueueHolder extends LifecycleAdapter {
 
     @Override
     public void start() throws Throwable {
-        startThreadForScanningInbound();
+//        startThreadForScanningInbound();
         startThreadToProcessOutbound();
     }
 
@@ -84,11 +84,11 @@ public class AsyncQueueHolder extends LifecycleAdapter {
 
             try {
                 while (true) {
-                    GraphCommand command = outboundQueue.poll(100, TimeUnit.MILLISECONDS);
+                    GraphCommand command = queue.poll(100, TimeUnit.MILLISECONDS);
                     if (POISON.equals(command)) {
+                        long now = new Date().getTime();
+                        log.info("got poison -> terminating, opscount " + opsCount + " duration " + (now-timestamp));
                         if (tx!=null) {
-                            long now = new Date().getTime();
-                            log.info("got poison -> terminating, opscount " + opsCount + " duration " + (now-timestamp));
                             tx.success();
                             tx.close();
                         }
@@ -111,9 +111,13 @@ public class AsyncQueueHolder extends LifecycleAdapter {
                                 timestamp = new Date().getTime();
                                 log.info("new tx " + timestamp);
                             }
-                            command.run(graphDatabaseService, log);
-                            opsCount++;
-                            log.debug("processed " + command + " opscount=" + opsCount);
+                            try {
+                                command.run(graphDatabaseService, log);
+                                opsCount++;
+                                log.debug("processed " + command + " opscount=" + opsCount);
+                            } catch (RuntimeException e) {
+                                log.warn("oops, maybe originating tx not yet closed", e);
+                            }
                         }
                     }
                 }
@@ -128,37 +132,9 @@ public class AsyncQueueHolder extends LifecycleAdapter {
         }).start();
     }
 
-    private void startThreadForScanningInbound() {
-        new Thread(() -> {
-            try {
-                int opsCount = 0;
-                while (true) {
-                    for (GraphCommand command : inboundQueue) {
-                        if (command.equals(POISON)) {
-                            log.info("got poison -> adding to outbound");
-                            outboundQueue.put(POISON);
-                            return;
-                        }
-                        if (!command.getKernelTransaction().isOpen()) {
-                            inboundQueue.remove(command);
-                            outboundQueue.put(command);
-                            opsCount++;
-                            log.debug("moving " + command + " to outbound " + opsCount);
-                        }
-                    }
-//                    log.info("inbound: opscount " + opsCount + " size " + inboundQueue.size());
-                    Thread.sleep(INBOUND_QUEUE_SCAN_INTERVAL);
-                }
-            } catch (Exception e) {
-                log.error("oops", e);
-                throw new RuntimeException(e);
-            }
-        }).start();
-    }
-
     @Override
     public void stop() throws Throwable {
-        inboundQueue.put(POISON);
+        queue.put(POISON);
     }
 
 }

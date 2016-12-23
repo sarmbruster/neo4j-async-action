@@ -1,6 +1,6 @@
 package org.neo4j.asyncaction;
 
-import org.neo4j.graphdb.*;
+import org.neo4j.graphdb.Transaction;
 import org.neo4j.helpers.collection.Pair;
 import org.neo4j.kernel.api.KernelTransaction;
 import org.neo4j.kernel.api.KernelTransactionHandle;
@@ -69,7 +69,7 @@ public class AsyncQueueHolder extends LifecycleAdapter {
         this.log = logService.getUserLog(AsyncQueueHolder.class);
     }
 
-    public void add(GraphCommand consumer) {
+    public void add(GraphCommand command) {
         try {
             KernelTransaction kernelTransaction = threadToStatementContextBridge.getTopLevelTransactionBoundToThisThread(false);
             KernelTransactionHandle kernelTransactionHandle = KernelTransactionsHelper.getHandle(kernelTransactions, kernelTransaction);
@@ -84,10 +84,10 @@ public class AsyncQueueHolder extends LifecycleAdapter {
                         });
                     }
             );
-            log.debug("offering to queue " + consumer);
+            log.debug("offering to queue %s" + command.toString());
 
             Pair<GraphCommand, KernelTransactionHandle> offering = Pair.of(
-                    consumer,
+                    command,
                     KernelTransactionsHelper.getHandle(kernelTransactions, kernelTransaction)
             );
             if (!inboundQueue.offer(offering, INBOUND_QUEUE_ADD_TIMEOUT, TimeUnit.MILLISECONDS)) {
@@ -127,7 +127,7 @@ public class AsyncQueueHolder extends LifecycleAdapter {
                     if (POISON.equals(command)) {
                         if (tx!=null) {
                             long now = new Date().getTime();
-                            log.info("got poison -> terminating, opscount " + opsCount + " duration " + (now-timestamp));
+                            log.info("got poison -> terminating, opscount %d duration %d", opsCount, (now-timestamp));
                             tx.success();
                             tx.close();
                         }

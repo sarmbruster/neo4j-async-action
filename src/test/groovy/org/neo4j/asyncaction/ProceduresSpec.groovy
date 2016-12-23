@@ -29,12 +29,8 @@ UNWIND range(1,20) as x
 CALL async.createRelationship(a, b, 'KNOWS')  
 RETURN a,b""".cypher()
 
-        def asyncQueueHolder = ((GraphDatabaseAPI)graphDatabaseService).dependencyResolver.resolveDependency(AsyncQueueHolder)
-        asyncQueueHolder.stop() // send poison
-        sleep 10+AsyncQueueHolder.INBOUND_QUEUE_SCAN_INTERVAL
-
-        userLogProvider.print(System.out)
-
+        finishQueueAndWait()
+//        userLogProvider.print(System.out)
 
         then:
         "MATCH ()-[r:KNOWS]->() RETURN count(r) as count".cypher()[0].count == 20
@@ -44,24 +40,18 @@ RETURN a,b""".cypher()
         setup:
         "create index on :Person(id)".cypher()
         "MERGE (dense:Person{id:'dense'})".cypher()
-        ExecutorService executorService = Executors.newFixedThreadPool(8)
 
         when:
-
-        (1..1000).each {
-            executorService.submit {
-                """MERGE (dense:Person{id:'dense'}) 
+        boolean regularTermination = runWithExecutorService(1000) { num ->
+            """MERGE (dense:Person{id:'dense'}) 
 MERGE (rnd:Person{id:'person_' +toInt(rand()*1000)})
 MERGE (rnd)-[:KNOWS]->(dense)""".cypher()
-            }
         }
-        executorService.shutdown()
 
         then:
-        executorService.awaitTermination(10, SECONDS)
+        regularTermination
         "match (p:Person) return count(p) as c".cypher()[0].c < 1000
         "match (p:Person{id:'dense'}) return size((p)<-[:KNOWS]-()) as c".cypher()[0].c < 1000
-
     }
 
 
@@ -69,32 +59,19 @@ MERGE (rnd)-[:KNOWS]->(dense)""".cypher()
         setup:
         "create index on :Person(id)".cypher()
         "MERGE (dense:Person{id:'dense'})".cypher()
-        ExecutorService executorService = Executors.newFixedThreadPool(8)
 
         when:
-        (1..1000).each { num ->
-            executorService.submit {
-                try {
-                    graphDatabaseService.execute('''MERGE (dense:Person{id:'dense'}) 
+        boolean regularTermination = runWithExecutorService(1000) { num ->
+            graphDatabaseService.execute('''MERGE (dense:Person{id:'dense'}) 
     CREATE (rnd:Person{id:$id})
     WITH dense, rnd 
     CALL async.createRelationship(rnd, dense, 'KNOWS') 
     RETURN dense, rnd''', [id: "person_${num}".toString()])
-                } catch (Exception e) {
-                    println e
-                    throw new RuntimeException(e)
-                }
-            }
         }
-        executorService.shutdown()
-        executorService.awaitTermination(10, SECONDS)
-
-        def asyncQueueHolder = ((GraphDatabaseAPI)graphDatabaseService).dependencyResolver.resolveDependency(AsyncQueueHolder)
-        asyncQueueHolder.stop() // send poison
-        sleep 10 + AsyncQueueHolder.INBOUND_QUEUE_SCAN_INTERVAL
-        userLogProvider.print(System.out)
+//        userLogProvider.print(System.out)
 
         then:
+        regularTermination
         "match (p:Person) return count(p) as c".cypher()[0].c == 1001
         "match (p:Person{id:'dense'}) return size((p)<-[:KNOWS]-()) as c".cypher()[0].c == 1000
 
@@ -104,17 +81,30 @@ MERGE (rnd)-[:KNOWS]->(dense)""".cypher()
         setup:
         "create index on :Person(id)".cypher()
         "MERGE (dense:Person{id:'dense'})".cypher()
-        ExecutorService executorService = Executors.newFixedThreadPool(8)
 
         when:
-        (1..1000).each {
-            executorService.submit {
-                try {
-                    graphDatabaseService.execute("""MERGE (dense:Person{id:'dense'}) 
+        boolean regularTermination = runWithExecutorService(1000) {
+            graphDatabaseService.execute('''MERGE (dense:Person{id:'dense'}) 
     MERGE (rnd:Person{id:'person_' +toInt(rand()*1000)})
     WITH dense, rnd 
     CALL async.mergeRelationship(rnd, dense, 'KNOWS') 
-    RETURN dense, rnd""")
+    RETURN dense, rnd''')
+        }
+//        userLogProvider.print(System.out)
+
+        then:
+        regularTermination
+        "match (p:Person) return count(p) as c".cypher()[0].c < 800
+        "match (p:Person{id:'dense'}) return size((p)<-[:KNOWS]-()) as c".cypher()[0].c < 800
+        "match (p:Person) return size((p)-[:KNOWS]->()) as c".cypher()[0].c == 0
+    }
+
+    private boolean runWithExecutorService(int times, Closure closure) {
+        ExecutorService executorService = Executors.newFixedThreadPool(8)
+        (1..times).each { num ->
+            executorService.submit {
+                try {
+                    closure.call(num)
                 } catch (Exception e) {
                     println e
                     throw new RuntimeException(e)
@@ -122,15 +112,16 @@ MERGE (rnd)-[:KNOWS]->(dense)""".cypher()
             }
         }
         executorService.shutdown()
-        executorService.awaitTermination(10, SECONDS)
+        def regularTermination = executorService.awaitTermination(10, SECONDS)
+        finishQueueAndWait()
+        return regularTermination
+    }
 
-        def asyncQueueHolder = ((GraphDatabaseAPI)graphDatabaseService).dependencyResolver.resolveDependency(AsyncQueueHolder)
+    private void finishQueueAndWait() {
+        def asyncQueueHolder = ((GraphDatabaseAPI) graphDatabaseService).dependencyResolver.resolveDependency(AsyncQueueHolder)
         asyncQueueHolder.stop() // send poison
-        sleep 10+AsyncQueueHolder.INBOUND_QUEUE_SCAN_INTERVAL
-        userLogProvider.print(System.out)
-
-        then:
-        "match (p:Person) return count(p) as c".cypher()[0].c < 1000
-        "match (p:Person{id:'dense'}) return size((p)<-[:KNOWS]-()) as c".cypher()[0].c < 1000
+        while (!asyncQueueHolder.outboundQueue.empty) {
+            sleep 10
+        }
     }
 }

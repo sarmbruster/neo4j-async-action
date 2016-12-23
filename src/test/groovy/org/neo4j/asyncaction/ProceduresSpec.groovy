@@ -19,7 +19,7 @@ class ProceduresSpec extends Specification {
 
     @Rule
     @Delegate(interfaces = false)
-    Neo4jResource neo4j = new Neo4jResource(userLogProvider: new AssertableLogProvider(), internalLogProvider: new AssertableLogProvider())
+    Neo4jResource neo4j = new Neo4jResource(userLogProvider: new AssertableLogProvider(false), internalLogProvider: new AssertableLogProvider(false))
 
     def "should async creation of relationships work"() {
         when:
@@ -28,6 +28,21 @@ WITH a,b
 UNWIND range(1,20) as x
 CALL async.createRelationship(a, b, 'KNOWS')  
 RETURN a,b""".cypher()
+
+        finishQueueAndWait()
+//        userLogProvider.print(System.out)
+
+        then:
+        "MATCH ()-[r:KNOWS]->() RETURN count(r) as count".cypher()[0].count == 20
+    }
+
+    def "should async creation of relationships via cypher work"() {
+        when:
+        Result result = '''CREATE (a), (b) 
+WITH a,b
+UNWIND range(1,20) as x
+CALL async.cypher("with $start as start, $end as end create (start)-[:KNOWS]->(end)", {start:a, end:b})  
+RETURN a,b'''.cypher()
 
         finishQueueAndWait()
 //        userLogProvider.print(System.out)

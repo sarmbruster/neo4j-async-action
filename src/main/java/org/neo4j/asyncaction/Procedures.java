@@ -6,7 +6,11 @@ import org.neo4j.graphdb.RelationshipType;
 import org.neo4j.kernel.internal.GraphDatabaseAPI;
 import org.neo4j.procedure.*;
 
+import java.util.Map;
 import java.util.stream.StreamSupport;
+
+import static org.neo4j.graphdb.Direction.INCOMING;
+import static org.neo4j.graphdb.Direction.OUTGOING;
 
 /**
  * @author Stefan Armbruster
@@ -22,8 +26,7 @@ public class Procedures {
             @Name("startNode") Node startNode,
             @Name("endNode") Node endNode,
             @Name("relationshipType") String relationshipType) {
-        AsyncQueueHolder asyncQueueHolder = api.getDependencyResolver().resolveDependency(AsyncQueueHolder.class);
-        asyncQueueHolder.add((graphDatabaseService, log) -> startNode.createRelationshipTo(endNode, RelationshipType.withName(relationshipType)));
+        addToAsyncQueue((graphDatabaseService, log) -> startNode.createRelationshipTo(endNode, RelationshipType.withName(relationshipType)));
     }
 
     @Procedure(name = "async.mergeRelationship", mode = Mode.WRITE)
@@ -32,26 +35,38 @@ public class Procedures {
             @Name("startNode") Node startNode,
             @Name("endNode") Node endNode,
             @Name("relationshipType") String relationshipType) {
-        AsyncQueueHolder asyncQueueHolder = api.getDependencyResolver().resolveDependency(AsyncQueueHolder.class);
-        asyncQueueHolder.add((graphDatabaseService, log) -> {
+        addToAsyncQueue((graphDatabaseService, log) -> {
             RelationshipType rt = RelationshipType.withName(relationshipType);
             int startDegree = startNode.getDegree(rt);
             int endDegree = endNode.getDegree(rt);
             boolean startNodeCheaper = Math.min(startDegree, endDegree) == startDegree;
 
-            boolean relationshipExists = false;
-            if (startNodeCheaper) {
-                relationshipExists = StreamSupport.stream(startNode.getRelationships(rt, Direction.OUTGOING).spliterator(), false)
-                        .anyMatch(relationship -> relationship.getEndNode().equals(endNode));
-            } else {
-                relationshipExists = StreamSupport.stream(endNode.getRelationships(rt, Direction.INCOMING).spliterator(), false)
-                        .anyMatch(relationship -> relationship.getStartNode().equals(startNode));
-            }
+            final Node cheaperNode = startNodeCheaper ? startNode : endNode;
+            final Node expensiverNode = startNodeCheaper ? endNode : startNode;
+            final Direction direction = startNodeCheaper ? OUTGOING : INCOMING;
+
+            boolean relationshipExists = StreamSupport.stream(cheaperNode.getRelationships(rt, direction).spliterator(), false)
+                    .anyMatch(relationship -> relationship.getOtherNode(cheaperNode).equals(expensiverNode));
 
             if (!relationshipExists) {
                 startNode.createRelationshipTo(endNode, RelationshipType.withName(relationshipType));
             }
-
         });
     }
+
+    @Procedure(name = "async.cypher", mode = Mode.WRITE)
+    @Description("queue a cypher statement for async batched processing to prevent locking issues")
+    public void asyncCypher(
+            @Name("cypher") String cypherString,
+            @Name("params") Map<String, Object> params) {
+        addToAsyncQueue( (graphDatabaseService, log) -> {
+            graphDatabaseService.execute(cypherString, params);
+        });
+    }
+
+    private void addToAsyncQueue(GraphCommand command) {
+        AsyncQueueHolder asyncQueueHolder = api.getDependencyResolver().resolveDependency(AsyncQueueHolder.class);
+        asyncQueueHolder.add(command);
+    }
+
 }

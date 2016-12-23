@@ -72,14 +72,14 @@ MERGE (rnd)-[:KNOWS]->(dense)""".cypher()
         ExecutorService executorService = Executors.newFixedThreadPool(8)
 
         when:
-        (1..1000).each {
+        (1..1000).each { num ->
             executorService.submit {
                 try {
-                    graphDatabaseService.execute("""MERGE (dense:Person{id:'dense'}) 
-    MERGE (rnd:Person{id:'person_' +toInt(rand()*1000)})
+                    graphDatabaseService.execute('''MERGE (dense:Person{id:'dense'}) 
+    CREATE (rnd:Person{id:$id})
     WITH dense, rnd 
     CALL async.createRelationship(rnd, dense, 'KNOWS') 
-    RETURN dense, rnd""")
+    RETURN dense, rnd''', [id: "person_${num}".toString()])
                 } catch (Exception e) {
                     println e
                     throw new RuntimeException(e)
@@ -95,8 +95,8 @@ MERGE (rnd)-[:KNOWS]->(dense)""".cypher()
         userLogProvider.print(System.out)
 
         then:
-        "match (p:Person) return count(p) as c".cypher()[0].c < 1000
-        "match (p:Person{id:'dense'}) return size((p)<-[:KNOWS]-()) as c".cypher()[0].c > 900
+        "match (p:Person) return count(p) as c".cypher()[0].c == 1001
+        "match (p:Person{id:'dense'}) return size((p)<-[:KNOWS]-()) as c".cypher()[0].c == 1000
 
     }
 

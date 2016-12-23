@@ -1,9 +1,11 @@
 package org.neo4j.asyncaction;
 
-import org.neo4j.graphdb.GraphDatabaseService;
 import org.neo4j.kernel.extension.KernelExtensionFactory;
+import org.neo4j.kernel.impl.api.KernelTransactions;
+import org.neo4j.kernel.impl.core.ThreadToStatementContextBridge;
 import org.neo4j.kernel.impl.logging.LogService;
 import org.neo4j.kernel.impl.spi.KernelContext;
+import org.neo4j.kernel.internal.GraphDatabaseAPI;
 import org.neo4j.kernel.lifecycle.Lifecycle;
 
 /**
@@ -12,9 +14,10 @@ import org.neo4j.kernel.lifecycle.Lifecycle;
 public class AsyncQueueHolderKernelExtensionFactory extends KernelExtensionFactory<AsyncQueueHolderKernelExtensionFactory.Dependencies> {
 
     public interface Dependencies {
-        GraphDatabaseService getGraphDatabaseService();
+        GraphDatabaseAPI getGraphDatabaseAPI();
 //        Config getConfig();
         LogService getLogService();
+        ThreadToStatementContextBridge getThreadToStatementContextBridge();
     }
 
     public AsyncQueueHolderKernelExtensionFactory() {
@@ -23,7 +26,11 @@ public class AsyncQueueHolderKernelExtensionFactory extends KernelExtensionFacto
 
     @Override
     public Lifecycle newInstance(KernelContext context, Dependencies dependencies) throws Throwable {
-        return new AsyncQueueHolder(dependencies.getGraphDatabaseService(), dependencies.getLogService());
+        return new AsyncQueueHolder(
+                dependencies.getGraphDatabaseAPI(),
+                dependencies.getLogService(),
+                dependencies.getThreadToStatementContextBridge()
+        );
     }
 
 }

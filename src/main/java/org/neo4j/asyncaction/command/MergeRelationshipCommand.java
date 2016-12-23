@@ -20,26 +20,22 @@ public class MergeRelationshipCommand extends CreateRelationshipCommand {
 
     @Override
     public void run(GraphDatabaseService graphDatabaseService, Log log) {
-        try {
-            RelationshipType rt = RelationshipType.withName(getRelationshipType());
-            int startDegree = getStartNode().getDegree(rt);
-            int endDegree = getEndNode().getDegree(rt);
-            boolean startNodeCheaper = Math.min(startDegree, endDegree) == startDegree;
+        RelationshipType rt = RelationshipType.withName(getRelationshipType());
+        int startDegree = getStartNode().getDegree(rt);
+        int endDegree = getEndNode().getDegree(rt);
+        boolean startNodeCheaper = Math.min(startDegree, endDegree) == startDegree;
 
-            boolean relationshipExists = false;
-            if (startNodeCheaper) {
-                relationshipExists = StreamSupport.stream(getStartNode().getRelationships(rt, Direction.OUTGOING).spliterator(), false)
-                        .anyMatch(relationship -> relationship.getEndNode().equals(getEndNode()));
-            } else {
-                relationshipExists = StreamSupport.stream(getEndNode().getRelationships(rt, Direction.INCOMING).spliterator(), false)
-                        .anyMatch(relationship -> relationship.getStartNode().equals(getStartNode()));
-            }
+        boolean relationshipExists = false;
+        if (startNodeCheaper) {
+            relationshipExists = StreamSupport.stream(getStartNode().getRelationships(rt, Direction.OUTGOING).spliterator(), false)
+                    .anyMatch(relationship -> relationship.getEndNode().equals(getEndNode()));
+        } else {
+            relationshipExists = StreamSupport.stream(getEndNode().getRelationships(rt, Direction.INCOMING).spliterator(), false)
+                    .anyMatch(relationship -> relationship.getStartNode().equals(getStartNode()));
+        }
 
-            if (!relationshipExists) {
-                super.run(graphDatabaseService, log );
-            }
-        } catch (RuntimeException e) {
-            log.error("oops", e);
+        if (!relationshipExists) {
+            super.run(graphDatabaseService, log);
         }
     }
 }

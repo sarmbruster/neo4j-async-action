@@ -2,7 +2,14 @@ package org.neo4j.asyncaction;
 
 import org.neo4j.asyncaction.command.GraphCommand;
 import org.neo4j.graphdb.*;
+import org.neo4j.helpers.collection.Pair;
+import org.neo4j.kernel.api.KernelTransaction;
+import org.neo4j.kernel.api.KernelTransactionHandle;
+import org.neo4j.kernel.impl.api.KernelTransactions;
+import org.neo4j.kernel.impl.api.KernelTransactionsHelper;
+import org.neo4j.kernel.impl.core.ThreadToStatementContextBridge;
 import org.neo4j.kernel.impl.logging.LogService;
+import org.neo4j.kernel.internal.GraphDatabaseAPI;
 import org.neo4j.kernel.lifecycle.LifecycleAdapter;
 import org.neo4j.logging.Log;
 
@@ -42,37 +49,63 @@ public class AsyncQueueHolder extends LifecycleAdapter {
     public static final int INBOUND_QUEUE_SCAN_INTERVAL = 100;
 
     private final LogService logService;
-    private final GraphDatabaseService graphDatabaseService;
+    private final GraphDatabaseAPI graphDatabaseAPI;
     private final Log log;
+    private final ThreadToStatementContextBridge threadToStatementContextBridge;
+
+    // NB: KernelTransactions is not available in kernelExtension's dependencies - we need to use dependencyResolver in start()
+    private KernelTransactions kernelTransactions;
 
     // contains GraphCommand instance with active transaction
-    private BlockingQueue<GraphCommand> inboundQueue = new LinkedBlockingQueue<>(INBOUND_QUEUE_CAPACITY);
+    private BlockingQueue<Pair<GraphCommand, KernelTransactionHandle>> inboundQueue = new LinkedBlockingQueue<>(INBOUND_QUEUE_CAPACITY);
 
     // contains GraphCommand that are supposed to be processed, their originating transactions have been closed
     private BlockingQueue<GraphCommand> outboundQueue = new LinkedBlockingQueue<>(MAX_OPERATIONS_PER_TRANSACTION);
 
-    public AsyncQueueHolder(GraphDatabaseService graphDatabaseService, LogService logService) {
+    public AsyncQueueHolder(GraphDatabaseAPI graphDatabaseAPI, LogService logService,
+                            ThreadToStatementContextBridge threadToStatementContextBridge) {
+        this.graphDatabaseAPI = graphDatabaseAPI;
         this.logService = logService;
+        this.threadToStatementContextBridge = threadToStatementContextBridge;
         this.log = logService.getUserLog(AsyncQueueHolder.class);
-        this.graphDatabaseService = graphDatabaseService;
     }
 
     public void add(GraphCommand command) {
         try {
+            KernelTransaction kernelTransaction = threadToStatementContextBridge.getTopLevelTransactionBoundToThisThread(false);
+            KernelTransactionHandle kernelTransactionHandle = KernelTransactionsHelper.getHandle(kernelTransactions, kernelTransaction);
+
+            kernelTransaction.registerCloseListener(txId -> {
+                inboundQueue.stream()
+                        .filter(pair -> pair.other().equals(kernelTransactionHandle))
+                        .forEach(pair -> {
+                            GraphCommand cmd = pair.first();
+                            inboundQueue.remove(pair);
+                            outboundQueue.add(cmd);
+                        });
+                    }
+            );
             log.debug("offering to queue " + command);
-            if (!inboundQueue.offer(command, INBOUND_QUEUE_ADD_TIMEOUT, TimeUnit.MILLISECONDS)) {
+
+            Pair<GraphCommand, KernelTransactionHandle> offering = Pair.of(
+                    command,
+                    KernelTransactionsHelper.getHandle(kernelTransactions, command.getKernelTransaction())
+            );
+            if (!inboundQueue.offer(offering, INBOUND_QUEUE_ADD_TIMEOUT, TimeUnit.MILLISECONDS)) {
                 log.warn("timeout reached when adding to queue");
-                inboundQueue.put(command);
+                inboundQueue.put(offering);
             }
-            ;
-        } catch (InterruptedException e) {
+
+        } catch (RuntimeException|InterruptedException e) {
             throw new RuntimeException(e);
         }
     }
 
     @Override
     public void start() throws Throwable {
-        startThreadForScanningInbound();
+        kernelTransactions = graphDatabaseAPI.getDependencyResolver().resolveDependency(KernelTransactions.class);
+//        Object x = graphDatabaseAPI.getDependencyResolver().resolveDependency(ThreadToStatementContextBridge.class);
+//        startThreadForScanningInbound();
         startThreadToProcessOutbound();
     }
 
@@ -106,14 +139,20 @@ public class AsyncQueueHolder extends LifecycleAdapter {
 
                         if (command != null) {
                             if (tx == null) {
-                                tx = graphDatabaseService.beginTx();
+                                tx = graphDatabaseAPI.beginTx();
                                 opsCount = 0;
                                 timestamp = new Date().getTime();
                                 log.info("new tx " + timestamp);
                             }
-                            command.run(graphDatabaseService, log);
-                            opsCount++;
-                            log.debug("processed " + command + " opscount=" + opsCount);
+                            try {
+                                command.run(graphDatabaseAPI, log);
+                                opsCount++;
+                                log.debug("processed " + command + " opscount=" + opsCount);
+                            } catch (RuntimeException e) {
+                                log.error("oops", e);
+                                System.out.println(e);
+
+                            }
                         }
                     }
                 }
@@ -133,17 +172,21 @@ public class AsyncQueueHolder extends LifecycleAdapter {
             try {
                 int opsCount = 0;
                 while (true) {
-                    for (GraphCommand command : inboundQueue) {
+                    for (Pair<GraphCommand, KernelTransactionHandle> pair : inboundQueue) {
+                        GraphCommand command = pair.first();
+                        KernelTransactionHandle kernelTransactionHandle = pair.other();
                         if (command.equals(POISON)) {
                             log.info("got poison -> adding to outbound");
                             outboundQueue.put(POISON);
                             return;
                         }
-                        if (!command.getKernelTransaction().isOpen()) {
-                            inboundQueue.remove(command);
+                        if (!kernelTransactionHandle.isOpen()) {
+                            inboundQueue.remove(pair);
                             outboundQueue.put(command);
                             opsCount++;
                             log.debug("moving " + command + " to outbound " + opsCount);
+                        } else {
+                            System.out.println("still open: " + kernelTransactionHandle);
                         }
                     }
 //                    log.info("inbound: opscount " + opsCount + " size " + inboundQueue.size());
@@ -158,7 +201,12 @@ public class AsyncQueueHolder extends LifecycleAdapter {
 
     @Override
     public void stop() throws Throwable {
-        inboundQueue.put(POISON);
+
+        while (!inboundQueue.isEmpty()) {
+            Thread.sleep(10);
+        }
+        outboundQueue.put(POISON);
+//        inboundQueue.put(Pair.of(POISON, null));
     }
 
 }

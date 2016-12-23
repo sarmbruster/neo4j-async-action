@@ -5,6 +5,7 @@ import org.neo4j.asyncaction.command.MergeRelationshipCommand;
 import org.neo4j.graphdb.Node;
 import org.neo4j.graphdb.RelationshipType;
 import org.neo4j.kernel.api.KernelTransaction;
+import org.neo4j.kernel.impl.api.KernelTransactions;
 import org.neo4j.kernel.internal.GraphDatabaseAPI;
 import org.neo4j.procedure.*;
 

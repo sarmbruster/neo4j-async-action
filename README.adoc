@@ -1,0 +1,5 @@
+# neo4j-async-actions
+
+This library helps neo4j developers to perform parts of their graph mutating action asyncronously.
+
+more docs tbd

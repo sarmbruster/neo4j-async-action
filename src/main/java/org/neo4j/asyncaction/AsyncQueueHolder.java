@@ -101,18 +101,21 @@ public class AsyncQueueHolder extends LifecycleAdapter {
     }
 
     @Override
-    public void start() throws Throwable {
+    public void start() {
         kernelTransactions = graphDatabaseAPI.getDependencyResolver().resolveDependency(KernelTransactions.class);
         startThreadToProcessOutbound();
     }
 
     @Override
-    public void stop() throws Throwable {
-
-        while (!inboundQueue.isEmpty()) {
-            Thread.sleep(10);
+    public void stop() {
+        try {
+            while (!inboundQueue.isEmpty()) {
+                Thread.sleep(10);
+            }
+            outboundQueue.put(POISON);
+        } catch (InterruptedException e) {
+            throw new RuntimeException(e);
         }
-        outboundQueue.put(POISON);
     }
 
     private void startThreadToProcessOutbound() {
@@ -172,4 +175,7 @@ public class AsyncQueueHolder extends LifecycleAdapter {
     }
 
 
+    public boolean isQueueEmpty() {
+        return outboundQueue.isEmpty();
+    }
 }

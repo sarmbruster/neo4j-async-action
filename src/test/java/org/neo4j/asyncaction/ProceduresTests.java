@@ -120,11 +120,10 @@ public class ProceduresTests {
         neo4j.getGraphDatabaseService().execute("CREATE INDEX ON :Person(id)");
         neo4j.getGraphDatabaseService().execute("MERGE (dense:Person{id:'dense'})");
 
-        boolean regularTermination = runWithExecutorService(1000, o -> {
-            neo4j.getGraphDatabaseService().execute("MERGE (dense:Person{id:'dense'}) \n" +
-                    "MERGE (rnd:Person{id:'person_' +toInt(rand()*1000)})\n" +
-                    "MERGE (rnd)-[:KNOWS]->(dense)");
-        });
+        boolean regularTermination = runWithExecutorService(1000, o ->
+                neo4j.getGraphDatabaseService().execute("MERGE (dense:Person{id:'dense'}) \n" +
+                "MERGE (rnd:Person{id:'person_' +toInt(rand()*1000)})\n" +
+                "MERGE (rnd)-[:KNOWS]->(dense)"));
 
         assertTrue(regularTermination);
 
@@ -140,20 +139,18 @@ public class ProceduresTests {
 
         neo4j.getGraphDatabaseService().execute("CREATE INDEX ON :Person(id)");
         neo4j.getGraphDatabaseService().execute("MERGE (dense:Person{id:'dense'})");
-        boolean regularTermination = runWithExecutorService(1000, index -> {
-            neo4j.getGraphDatabaseService().execute("MERGE (dense:Person{id:'dense'}) \n" +
-                    "    CREATE (rnd:Person{id:$id})\n" +
-                    "    WITH dense, rnd \n" +
-                    "    CALL async.createRelationship(rnd, dense, 'KNOWS', {}) \n" +
-                    "    RETURN dense, rnd", Collections.singletonMap("id", "person_" + index));
-        });
+        boolean regularTermination = runWithExecutorService(1000, index -> neo4j.getGraphDatabaseService().execute("MERGE (dense:Person{id:'dense'}) \n" +
+                "    CREATE (rnd:Person{id:$id})\n" +
+                "    WITH dense, rnd \n" +
+                "    CALL async.createRelationship(rnd, dense, 'KNOWS', {}) \n" +
+                "    RETURN dense, rnd", Collections.singletonMap("id", "person_" + index)));
         assertTrue(regularTermination);
 
         long count = Iterators.single(neo4j.getGraphDatabaseService().execute("MATCH (p:Person) RETURN count(p) AS c").columnAs("c"));
-        assertTrue(count == 1001);
+        assertEquals(1001, count);
 
         count = Iterators.single(neo4j.getGraphDatabaseService().execute("MATCH (p:Person{id:'dense'}) RETURN size((p)<-[:KNOWS]-()) AS c").columnAs("c"));
-        assertTrue(count == 1000);
+        assertEquals(1000, count);
     }
 
     @Test
@@ -161,13 +158,11 @@ public class ProceduresTests {
 
         neo4j.getGraphDatabaseService().execute("CREATE INDEX ON :Person(id)");
         neo4j.getGraphDatabaseService().execute("MERGE (dense:Person{id:'dense'})");
-        boolean regularTermination = runWithExecutorService(1000, index -> {
-            neo4j.getGraphDatabaseService().execute("MERGE (dense:Person{id:'dense'}) \n" +
-                    "    MERGE (rnd:Person{id:'person_' +toInt(rand()*1000)})\n" +
-                    "    WITH dense, rnd \n" +
-                    "    CALL async.mergeRelationship(rnd, dense, 'KNOWS') \n" +
-                    "    RETURN dense, rnd");
-        });
+        boolean regularTermination = runWithExecutorService(1000, index -> neo4j.getGraphDatabaseService().execute("MERGE (dense:Person{id:'dense'}) \n" +
+                "    MERGE (rnd:Person{id:'person_' +toInt(rand()*1000)})\n" +
+                "    WITH dense, rnd \n" +
+                "    CALL async.mergeRelationship(rnd, dense, 'KNOWS') \n" +
+                "    RETURN dense, rnd"));
 
         assertTrue(regularTermination);
 
@@ -190,7 +185,7 @@ public class ProceduresTests {
         }
         finishQueueAndWait();
 
-        try (Transaction tx = db.beginTx()) {
+        try (Transaction ignored = db.beginTx()) {
             assertEquals(0, Iterables.count(db.getAllNodes()));
         }
     }
@@ -204,7 +199,7 @@ public class ProceduresTests {
         }
         finishQueueAndWait();
 
-        try (Transaction tx = db.beginTx()) {
+        try (Transaction ignored = db.beginTx()) {
             assertEquals(1, Iterables.count(db.getAllNodes()));
         }
     }

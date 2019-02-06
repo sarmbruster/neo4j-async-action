@@ -1,7 +1,6 @@
 package org.neo4j.asyncaction;
 
 import org.neo4j.graphdb.Transaction;
-import org.neo4j.helpers.collection.Pair;
 import org.neo4j.kernel.api.KernelTransaction;
 import org.neo4j.kernel.api.KernelTransactionHandle;
 import org.neo4j.kernel.impl.api.KernelTransactions;
@@ -12,14 +11,11 @@ import org.neo4j.kernel.internal.GraphDatabaseAPI;
 import org.neo4j.kernel.lifecycle.LifecycleAdapter;
 import org.neo4j.logging.Log;
 
+import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Date;
-import java.util.concurrent.BlockingQueue;
-import java.util.concurrent.LinkedBlockingQueue;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.*;
 
-/**
- * @author Stefan Armbruster
- */
 public class AsyncQueueHolder extends LifecycleAdapter {
 
     /**
@@ -32,37 +28,35 @@ public class AsyncQueueHolder extends LifecycleAdapter {
      */
     public static final int MAX_DURATION_PER_TRANSACTION = 1000; // millis
 
-    /**
-     * timeout for adding to inbound queue. A warning is spit out if this timeout is reached and afterwards we block.
-     */
-    public static final int INBOUND_QUEUE_ADD_TIMEOUT = 100;
-
-
-    public static final int INBOUND_QUEUE_CAPACITY = 100000;
-
-    /**
-     * scan inbound queue for finished transactions every x milliseconds
-     */
-    public static final int INBOUND_QUEUE_SCAN_INTERVAL = 100;
-
-    public static final GraphCommand POISON = (graphDatabaseService, log1) -> {};
+    public static final GraphCommand POISON = (graphDatabaseService, log1) -> {
+    };
 
     private final LogService logService;
+
     private final GraphDatabaseAPI graphDatabaseAPI;
+
     private final Log log;
+
     private final ThreadToStatementContextBridge threadToStatementContextBridge;
 
     // NB: KernelTransactions is not available in kernelExtension's dependencies - we need to use dependencyResolver in start()
     private KernelTransactions kernelTransactions;
 
     // contains GraphCommand instance with active transaction
-    private BlockingQueue<Pair<GraphCommand, KernelTransactionHandle>> inboundQueue = new LinkedBlockingQueue<>(INBOUND_QUEUE_CAPACITY);
+    private ConcurrentMap<Long, Collection<GraphCommand>> inboundGraphCommandsMap = new ConcurrentHashMap<>();
 
     // contains GraphCommand that are supposed to be processed, their originating transactions have been closed
     private BlockingQueue<GraphCommand> outboundQueue = new LinkedBlockingQueue<>(MAX_OPERATIONS_PER_TRANSACTION);
 
+    // set temporarily to true while closing queue
+    private boolean isClosing = false;
+
+    // prevent multiple invocations of stop()
+    private boolean closed = false;
+
     public AsyncQueueHolder(GraphDatabaseAPI graphDatabaseAPI, LogService logService,
                             ThreadToStatementContextBridge threadToStatementContextBridge) {
+
         this.graphDatabaseAPI = graphDatabaseAPI;
         this.logService = logService;
         this.threadToStatementContextBridge = threadToStatementContextBridge;
@@ -70,34 +64,23 @@ public class AsyncQueueHolder extends LifecycleAdapter {
     }
 
     public void add(GraphCommand command) {
-        try {
-            KernelTransaction kernelTransaction = threadToStatementContextBridge.getTopLevelTransactionBoundToThisThread(false);
-            KernelTransactionHandle kernelTransactionHandle = KernelTransactionsHelper.getHandle(kernelTransactions, kernelTransaction);
+        KernelTransaction kernelTransaction = threadToStatementContextBridge.getTopLevelTransactionBoundToThisThread(false);
+        KernelTransactionHandle kernelTransactionHandle = KernelTransactionsHelper.getHandle(kernelTransactions, kernelTransaction);
+        long transactionId = kernelTransactionHandle.getUserTransactionId();
 
+        Collection<GraphCommand> graphCommands = inboundGraphCommandsMap.computeIfAbsent(transactionId, (id) -> new ArrayList<>());
+        if (graphCommands.isEmpty()) {
+            log.debug("registering close listener for tx %s", kernelTransactionHandle.getUserTransactionName());
             kernelTransaction.registerCloseListener(txId -> {
-                inboundQueue.stream()
-                        .filter(pair -> pair.other().equals(kernelTransactionHandle))
-                        .forEach(pair -> {
-                            GraphCommand cmd = pair.first();
-                            inboundQueue.remove(pair);
-                            outboundQueue.add(cmd);
-                        });
+                        Collection<GraphCommand> commands = inboundGraphCommandsMap.remove(transactionId);
+                        if ((commands != null) && (txId != org.neo4j.internal.kernel.api.Transaction.ROLLBACK)) {
+                            outboundQueue.addAll(commands);
+                        }
                     }
             );
-            log.debug("offering to queue %s" + command.toString());
-
-            Pair<GraphCommand, KernelTransactionHandle> offering = Pair.of(
-                    command,
-                    KernelTransactionsHelper.getHandle(kernelTransactions, kernelTransaction)
-            );
-            if (!inboundQueue.offer(offering, INBOUND_QUEUE_ADD_TIMEOUT, TimeUnit.MILLISECONDS)) {
-                log.warn("timeout reached when adding to queue");
-                inboundQueue.put(offering);
-            }
-
-        } catch (InterruptedException e) {
-            throw new RuntimeException(e);
         }
+        graphCommands.add(command);
+        log.debug("added command to inbound queue %s", command.toString());
     }
 
     @Override
@@ -108,17 +91,27 @@ public class AsyncQueueHolder extends LifecycleAdapter {
 
     @Override
     public void stop() {
-        try {
-            while (!inboundQueue.isEmpty()) {
-                Thread.sleep(10);
+        if (!closed) {
+            try {
+                while (!inboundGraphCommandsMap.isEmpty()) {
+                    Thread.sleep(10);
+                }
+
+                isClosing = true;
+                outboundQueue.put(POISON);
+
+                while (isClosing) {
+                    Thread.sleep(10);
+                }
+            } catch (InterruptedException e) {
+                throw new RuntimeException(e);
             }
-            outboundQueue.put(POISON);
-        } catch (InterruptedException e) {
-            throw new RuntimeException(e);
+            closed = true;
         }
     }
 
     private void startThreadToProcessOutbound() {
+
         new Thread(() -> {
             Transaction tx = null;
             int opsCount = 0;
@@ -128,18 +121,19 @@ public class AsyncQueueHolder extends LifecycleAdapter {
                 while (true) {
                     GraphCommand command = outboundQueue.poll(100, TimeUnit.MILLISECONDS);
                     if (POISON.equals(command)) {
-                        if (tx!=null) {
+                        if (tx != null) {
                             long now = new Date().getTime();
-                            log.info("got poison -> terminating, opscount %d duration %d", opsCount, (now-timestamp));
+                            log.info("got poison -> terminating, opscount %d duration %d", opsCount, (now - timestamp));
                             tx.success();
                             tx.close();
                         }
+                        isClosing = false;
                         return; // finish worker thread
                     } else {
-                        if (tx!=null) {
+                        if (tx != null) {
                             long now = new Date().getTime();
-                            if ((opsCount >= MAX_OPERATIONS_PER_TRANSACTION) || (now-timestamp > MAX_DURATION_PER_TRANSACTION)) { //either 1000 ops or 1000millis
-                                log.info("rolling over transaction, opscount %d duration %d ", opsCount, (now-timestamp));
+                            if ((opsCount >= MAX_OPERATIONS_PER_TRANSACTION) || (now - timestamp > MAX_DURATION_PER_TRANSACTION)) { //either 1000 ops or 1000millis
+                                log.info("rolling over transaction, opscount %d duration %d ", opsCount, (now - timestamp));
                                 tx.success();
                                 tx.close();
                                 tx = null;
@@ -164,7 +158,7 @@ public class AsyncQueueHolder extends LifecycleAdapter {
                     }
                 }
             } catch (Exception e) {
-                if (tx!=null) {
+                if (tx != null) {
                     tx.failure();
                     tx.close();
                 }
@@ -173,7 +167,6 @@ public class AsyncQueueHolder extends LifecycleAdapter {
             }
         }).start();
     }
-
 
     public boolean isQueueEmpty() {
         return outboundQueue.isEmpty();

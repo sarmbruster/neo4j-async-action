@@ -23,7 +23,7 @@ repositories {
 
 ext {
     neo4jVersion = "3.4.5"
-//    neo4jClientVersion = "1.6.2"
+    neo4jClientVersion = "1.6.2"
 }
 
 dependencies {
@@ -36,7 +36,7 @@ dependencies {
 
     testCompile group: 'junit', name: 'junit', version: '4.12'
     testCompile group: 'org.neo4j.test', name: 'neo4j-harness', version: neo4jVersion
-//    testCompile "org.neo4j.driver:neo4j-java-driver:$neo4jClientVersion"
+    testCompile "org.neo4j.driver:neo4j-java-driver:$neo4jClientVersion"
 
 }
 

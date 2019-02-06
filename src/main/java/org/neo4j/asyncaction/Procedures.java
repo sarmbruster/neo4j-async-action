@@ -2,8 +2,10 @@ package org.neo4j.asyncaction;
 
 import org.neo4j.graphdb.Direction;
 import org.neo4j.graphdb.Node;
+import org.neo4j.graphdb.Relationship;
 import org.neo4j.graphdb.RelationshipType;
 import org.neo4j.kernel.internal.GraphDatabaseAPI;
+import org.neo4j.logging.Log;
 import org.neo4j.procedure.Context;
 import org.neo4j.procedure.Description;
 import org.neo4j.procedure.Name;
@@ -24,13 +26,35 @@ public class Procedures {
     @Context
     public GraphDatabaseAPI api;
 
+    @Context
+    public Log log;
+
+    @Procedure(name = "async.createRelationshipByIds", mode = READ)
+    @Description("create relationships asynchronously based on node ids to prevent locking issues")
+    public void createRelationshipOverId(
+            @Name("startNode") Long startNodeId,
+            @Name("endNode") Long endNodeId,
+            @Name("relationshipType") String relationshipType,
+            @Name(value = "relationshipProperties", defaultValue = "") Map<String, Object> relationshipProperties) {
+        asyncCreateRelationship(api.getNodeById(startNodeId), api.getNodeById(endNodeId), relationshipType, relationshipProperties);
+
+    }
+
     @Procedure(name = "async.createRelationship", mode = READ)
     @Description("create relationships asynchronously to prevent locking issues")
     public void asyncCreateRelationship(
             @Name("startNode") Node startNode,
             @Name("endNode") Node endNode,
-            @Name("relationshipType") String relationshipType) {
-        addToAsyncQueue((graphDatabaseService, log) -> startNode.createRelationshipTo(endNode, RelationshipType.withName(relationshipType)));
+            @Name("relationshipType") String relationshipType,
+            @Name(value = "relationshipProperties", defaultValue = "") Map<String, Object> relationshipProperties) {
+        addToAsyncQueue((graphDatabaseService, log) -> {
+            final Relationship relationship = startNode.createRelationshipTo(endNode, RelationshipType.withName(relationshipType));
+            if (relationshipProperties != null) {
+                for (String key : relationshipProperties.keySet()) {
+                    relationship.setProperty(key, relationshipProperties.get(key));
+                }
+            }
+        });
     }
 
     @Procedure(name = "async.mergeRelationship", mode = READ)
@@ -39,6 +63,7 @@ public class Procedures {
             @Name("startNode") Node startNode,
             @Name("endNode") Node endNode,
             @Name("relationshipType") String relationshipType) {
+
         addToAsyncQueue((graphDatabaseService, log) -> {
             RelationshipType rt = RelationshipType.withName(relationshipType);
             int startDegree = startNode.getDegree(rt);
@@ -63,12 +88,14 @@ public class Procedures {
     public void asyncCypher(
             @Name("cypher") String cypherString,
             @Name("params") Map<String, Object> params) {
-        addToAsyncQueue( (graphDatabaseService, log) -> {
+
+        addToAsyncQueue((graphDatabaseService, log) -> {
             graphDatabaseService.execute(cypherString, params);
         });
     }
 
     private void addToAsyncQueue(GraphCommand command) {
+
         AsyncQueueHolder asyncQueueHolder = api.getDependencyResolver().resolveDependency(AsyncQueueHolder.class);
         asyncQueueHolder.add(command);
     }

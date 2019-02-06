@@ -2,9 +2,6 @@ package org.neo4j.asyncaction;
 
 import org.neo4j.graphdb.Transaction;
 import org.neo4j.kernel.api.KernelTransaction;
-import org.neo4j.kernel.api.KernelTransactionHandle;
-import org.neo4j.kernel.impl.api.KernelTransactions;
-import org.neo4j.kernel.impl.api.KernelTransactionsHelper;
 import org.neo4j.kernel.impl.core.ThreadToStatementContextBridge;
 import org.neo4j.kernel.impl.logging.LogService;
 import org.neo4j.kernel.internal.GraphDatabaseAPI;
@@ -39,11 +36,8 @@ public class AsyncQueueHolder extends LifecycleAdapter {
 
     private final ThreadToStatementContextBridge threadToStatementContextBridge;
 
-    // NB: KernelTransactions is not available in kernelExtension's dependencies - we need to use dependencyResolver in start()
-    private KernelTransactions kernelTransactions;
-
     // contains GraphCommand instance with active transaction
-    private ConcurrentMap<Long, Collection<GraphCommand>> inboundGraphCommandsMap = new ConcurrentHashMap<>();
+    private ConcurrentMap<KernelTransaction, Collection<GraphCommand>> inboundGraphCommandsMap = new ConcurrentHashMap<>();
 
     // contains GraphCommand that are supposed to be processed, their originating transactions have been closed
     private BlockingQueue<GraphCommand> outboundQueue = new LinkedBlockingQueue<>(MAX_OPERATIONS_PER_TRANSACTION);
@@ -56,7 +50,6 @@ public class AsyncQueueHolder extends LifecycleAdapter {
 
     public AsyncQueueHolder(GraphDatabaseAPI graphDatabaseAPI, LogService logService,
                             ThreadToStatementContextBridge threadToStatementContextBridge) {
-
         this.graphDatabaseAPI = graphDatabaseAPI;
         this.logService = logService;
         this.threadToStatementContextBridge = threadToStatementContextBridge;
@@ -65,15 +58,16 @@ public class AsyncQueueHolder extends LifecycleAdapter {
 
     public void add(GraphCommand command) {
         KernelTransaction kernelTransaction = threadToStatementContextBridge.getTopLevelTransactionBoundToThisThread(false);
-        KernelTransactionHandle kernelTransactionHandle = KernelTransactionsHelper.getHandle(kernelTransactions, kernelTransaction);
-        long transactionId = kernelTransactionHandle.getUserTransactionId();
 
-        Collection<GraphCommand> graphCommands = inboundGraphCommandsMap.computeIfAbsent(transactionId, (id) -> new ArrayList<>());
+        Collection<GraphCommand> graphCommands = inboundGraphCommandsMap.computeIfAbsent(kernelTransaction, (id) -> new ArrayList<>());
         if (graphCommands.isEmpty()) {
-            log.debug("registering close listener for tx %s", kernelTransactionHandle.getUserTransactionName());
+            log.debug("registering close listener for tx %s", kernelTransaction.toString());
+
+            // we need to use a closeListiner here to also get notified in case of rollback
+            // normal txeventhandler are not sufficient since they don't get called upon read only tx.
             kernelTransaction.registerCloseListener(txId -> {
-                        Collection<GraphCommand> commands = inboundGraphCommandsMap.remove(transactionId);
-                        if ((commands != null) && (txId != org.neo4j.internal.kernel.api.Transaction.ROLLBACK)) {
+                        Collection<GraphCommand> commands = inboundGraphCommandsMap.remove(kernelTransaction);
+                        if ((commands != null) && (txId != -1)) {
                             outboundQueue.addAll(commands);
                         }
                     }
@@ -85,7 +79,6 @@ public class AsyncQueueHolder extends LifecycleAdapter {
 
     @Override
     public void start() {
-        kernelTransactions = graphDatabaseAPI.getDependencyResolver().resolveDependency(KernelTransactions.class);
         startThreadToProcessOutbound();
     }
 
@@ -170,5 +163,9 @@ public class AsyncQueueHolder extends LifecycleAdapter {
 
     public boolean isQueueEmpty() {
         return outboundQueue.isEmpty();
+    }
+
+    public boolean isInBoundEmpty() {
+        return inboundGraphCommandsMap.isEmpty();
     }
 }

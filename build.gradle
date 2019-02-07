@@ -2,6 +2,7 @@ plugins {
     id 'java'
     //id 'com.github.johnrengelman.shadow' version '1.2.3'
     id 'idea'
+    id 'maven'
 }
 
 idea {
@@ -13,13 +14,6 @@ idea {
 
 sourceCompatibility=JavaVersion.VERSION_1_8
 targetCompatibility=JavaVersion.VERSION_1_8
-
-repositories {
-    mavenCentral()
-    mavenLocal()
-    //maven { url "http://m2.neo4j.org/content/repositories/releases/" }
-    maven { url "https://raw.github.com/neo4j-contrib/m2/master/releases" }
-}
 
 ext {
     neo4jVersion = "3.4.5"

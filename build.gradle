@@ -1,6 +1,5 @@
 plugins {
     id 'java'
-    //id 'com.github.johnrengelman.shadow' version '1.2.3'
     id 'idea'
     id 'maven'
 }
@@ -20,17 +19,13 @@ sourceCompatibility=JavaVersion.VERSION_1_8
 targetCompatibility=JavaVersion.VERSION_1_8
 
 ext {
-    neo4jVersion = "3.4.5"
-    neo4jClientVersion = "1.6.2"
+    neo4jVersion = "3.4.12"
+    neo4jClientVersion = "1.7.2"
 }
 
 dependencies {
     compile group: 'org.neo4j', name: 'neo4j-kernel', version: neo4jVersion
     compile group: 'org.neo4j', name: 'neo4j-lucene-index', version: neo4jVersion
-
-//    compile group: 'org.neo4j', name: 'server-api', version: neo4jVersion
-//    compile "org.slf4j:slf4j-api:1.7.20"
-//    compile group: 'org.neo4j.app', name: 'neo4j-server', version: neo4jVersion
 
     testCompile group: 'junit', name: 'junit', version: '4.12'
     testCompile group: 'org.neo4j.test', name: 'neo4j-harness', version: neo4jVersion
@@ -40,13 +35,6 @@ dependencies {
 
 version = "0.1"
 group = "org.neo4j.asyncaction"
-
-/*shadowJar {
-  dependencies {
-    include(dependency('org.codehaus.groovy:groovy-all'))
-    include(dependency('org.ccil.cowan.tagsoup:tagsoup'))
-  }
-}*/
 
 test {
     systemProperties 'user.language': 'en', 'user.country': 'US'

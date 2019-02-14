@@ -11,6 +11,7 @@ import org.neo4j.logging.Log;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Date;
+import java.util.List;
 import java.util.concurrent.*;
 
 public class AsyncQueueHolder extends LifecycleAdapter {
@@ -37,7 +38,7 @@ public class AsyncQueueHolder extends LifecycleAdapter {
     private final ThreadToStatementContextBridge threadToStatementContextBridge;
 
     // contains GraphCommand instance with active transaction
-    private ConcurrentMap<KernelTransaction, Collection<GraphCommand>> inboundGraphCommandsMap = new ConcurrentHashMap<>();
+    private ConcurrentMap<KernelTransaction, List<GraphCommand>> inboundGraphCommandsMap = new ConcurrentHashMap<>();
 
     // contains GraphCommand that are supposed to be processed, their originating transactions have been closed
     private BlockingQueue<GraphCommand> outboundQueue = new LinkedBlockingQueue<>(MAX_OPERATIONS_PER_TRANSACTION);
@@ -58,13 +59,11 @@ public class AsyncQueueHolder extends LifecycleAdapter {
 
     public void add(GraphCommand command) {
         KernelTransaction kernelTransaction = threadToStatementContextBridge.getTopLevelTransactionBoundToThisThread(false);
-
         Collection<GraphCommand> graphCommands = inboundGraphCommandsMap.computeIfAbsent(kernelTransaction, (id) -> new ArrayList<>());
         if (graphCommands.isEmpty()) {
             log.debug("registering close listener for tx %s", kernelTransaction.toString());
-
-            // we need to use a closeListiner here to also get notified in case of rollback
-            // normal txeventhandler are not sufficient since they don't get called upon read only tx.
+            // we need to use a closeListener here to also get notified in case of rollback
+            // normal txEventHandlers are not sufficient since they don't get called upon a read only tx.
             kernelTransaction.registerCloseListener(txId -> {
                         Collection<GraphCommand> commands = inboundGraphCommandsMap.remove(kernelTransaction);
                         if ((commands != null) && (txId != -1)) {

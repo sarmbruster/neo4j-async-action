@@ -35,7 +35,7 @@ dependencies {
     testCompile "org.neo4j.driver:neo4j-java-driver:$neo4jClientVersion"
 }
 
-version = "0.1"
+version = "0.2"
 group = "org.neo4j.asyncaction"
 
 test {

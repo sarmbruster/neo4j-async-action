@@ -1,5 +1,6 @@
 package org.neo4j.asyncaction;
 
+import org.neo4j.kernel.configuration.Config;
 import org.neo4j.kernel.extension.KernelExtensionFactory;
 import org.neo4j.kernel.impl.core.ThreadToStatementContextBridge;
 import org.neo4j.kernel.impl.logging.LogService;
@@ -14,7 +15,7 @@ public class AsyncQueueHolderKernelExtensionFactory extends KernelExtensionFacto
 
     public interface Dependencies {
         GraphDatabaseAPI getGraphDatabaseAPI();
-//        Config getConfig();
+        Config getConfig();
         LogService getLogService();
         ThreadToStatementContextBridge getThreadToStatementContextBridge();
     }
@@ -27,6 +28,7 @@ public class AsyncQueueHolderKernelExtensionFactory extends KernelExtensionFacto
     public Lifecycle newInstance(KernelContext context, Dependencies dependencies) {
         return new AsyncQueueHolder(
                 dependencies.getGraphDatabaseAPI(),
+                dependencies.getConfig(),
                 dependencies.getLogService(),
                 dependencies.getThreadToStatementContextBridge()
         );

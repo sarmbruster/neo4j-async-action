@@ -51,3 +51,18 @@ MATCH (a:Person{name:'Foo'}), (b:Person{name:'Bar'})
 CALL async.cypher("merge (a)-[:KNOWS]-(b)", {a:a, b,b})
 RETURN a,b
 ----
+
+## configuration
+
+There are some config options that can be used in `neo4j.conf`:
+
+[options="header"]
+|===
+| option | description | default value
+| `async.queueSize` | how much elements can be stored in the outbound queue  | 10000
+| `async.max_operations_per_transaction` | after how many commands will the transaction be rolled over  | 10000
+| `async.max_duration_per_transaction` | after how many millis will the transaction be rolled over  | 1000
+|===
+
+NOTE: whatever from `async.max_operations_per_transaction` or `async.max_duration_per_transaction` is reached first will
+enforce a transaction rollover.

@@ -2,6 +2,7 @@ package org.neo4j.asyncaction;
 
 import org.neo4j.graphdb.Transaction;
 import org.neo4j.kernel.api.KernelTransaction;
+import org.neo4j.kernel.configuration.Config;
 import org.neo4j.kernel.impl.core.ThreadToStatementContextBridge;
 import org.neo4j.kernel.impl.logging.LogService;
 import org.neo4j.kernel.internal.GraphDatabaseAPI;
@@ -17,16 +18,6 @@ import java.util.function.Predicate;
 
 public class AsyncQueueHolder extends LifecycleAdapter {
 
-    /**
-     * roll over transaction latest at this number of operations
-     */
-    public static final int MAX_OPERATIONS_PER_TRANSACTION = 10000;
-
-    /**
-     * roll over transaction latest after this duration in milliseconds
-     */
-    public static final int MAX_DURATION_PER_TRANSACTION = 1000; // millis
-
     public static final GraphCommand POISON = (graphDatabaseService, log1) -> {
     };
 
@@ -36,11 +27,14 @@ public class AsyncQueueHolder extends LifecycleAdapter {
 
     private final ThreadToStatementContextBridge threadToStatementContextBridge;
 
+    private final int maxOperationsPerTransaction;
+    private final int maxDurationPerTransaction;
+
     // contains GraphCommand instances per each active transaction
-    private ConcurrentMap<KernelTransaction, List<GraphCommand>> inboundGraphCommandsMap = new ConcurrentHashMap<>();
+    final private ConcurrentMap<KernelTransaction, List<GraphCommand>> inboundGraphCommandsMap = new ConcurrentHashMap<>();
 
     // contains GraphCommand that are supposed to be processed, their originating transactions have been closed
-    private BlockingQueue<GraphCommand> outboundQueue = new LinkedBlockingQueue<>(MAX_OPERATIONS_PER_TRANSACTION);
+    final private BlockingQueue<GraphCommand> outboundQueue;
 
     // set temporarily to true while closing queue
     private boolean isClosing = false;
@@ -48,11 +42,15 @@ public class AsyncQueueHolder extends LifecycleAdapter {
     // prevent multiple invocations of stop()
     private boolean closed = false;
 
-    public AsyncQueueHolder(GraphDatabaseAPI graphDatabaseAPI, LogService logService,
+    public AsyncQueueHolder(GraphDatabaseAPI graphDatabaseAPI, Config config, LogService logService,
                             ThreadToStatementContextBridge threadToStatementContextBridge) {
         this.graphDatabaseAPI = graphDatabaseAPI;
         this.threadToStatementContextBridge = threadToStatementContextBridge;
         this.log = logService.getUserLog(AsyncQueueHolder.class);
+        this.maxOperationsPerTransaction = Integer.parseInt(config.getRaw("async.max_operations_per_transaction").orElse("10000"));
+        this.maxDurationPerTransaction = Integer.parseInt(config.getRaw("async.max_duration_per_transaction").orElse("1000"));
+        int queueSize = Integer.parseInt(config.getRaw("async.queueSize").orElse("10000"));
+        outboundQueue= new LinkedBlockingQueue<>(queueSize);
     }
 
     public void add(GraphCommand command) {
@@ -128,7 +126,7 @@ public class AsyncQueueHolder extends LifecycleAdapter {
                     } else {
                         if (tx != null) {
                             long now = new Date().getTime();
-                            if ((opsCount >= MAX_OPERATIONS_PER_TRANSACTION) || (now - timestamp > MAX_DURATION_PER_TRANSACTION)) { //either 1000 ops or 1000millis
+                            if ((opsCount >= maxOperationsPerTransaction) || (now - timestamp > maxDurationPerTransaction)) { //either 1000 ops or 1000millis
                                 log.info("rolling over transaction, opscount %d duration %d ", opsCount, (now - timestamp));
                                 tx.success();
                                 tx.close();
@@ -147,7 +145,7 @@ public class AsyncQueueHolder extends LifecycleAdapter {
                                 command.accept(graphDatabaseAPI, log);
                                 opsCount++;
                                 log.debug("processed %s opscount=%d", command.toString(), opsCount);
-                            } catch (RuntimeException e) {
+                            } catch (RuntimeException e) { //
                                 log.error("oops", e);
                             }
                         }

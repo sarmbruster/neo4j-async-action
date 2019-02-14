@@ -46,6 +46,7 @@ public class ProceduresTests {
                 .newImpermanentDatabaseBuilder()
                 .setConfig(connector.listen_address, ListenSocketAddress.listenAddress("0.0.0.0", port))
                 .setConfig(connector.enabled, "true")
+                .setConfig("async.queueSize", "5") // use tiny queue for tests to make sure we don't fail
                 .newGraphDatabase();
         registerProcedure(db, Procedures.class);
     }

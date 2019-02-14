@@ -52,6 +52,11 @@ CALL async.cypher("merge (a)-[:KNOWS]-(b)", {a:a, b,b})
 RETURN a,b
 ----
 
+## installation
+
+Grab a release from []https://github.com/sarmbruster/neo4j-async-action/releases and copy the jar file into your neo4j's
+`plugins` folder. Optionally set the config options below to reasonable value. Restart your neo4j instance.
+
 ## configuration
 
 There are some config options that can be used in `neo4j.conf`:

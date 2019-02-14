@@ -13,6 +13,7 @@ import java.util.Collection;
 import java.util.Date;
 import java.util.List;
 import java.util.concurrent.*;
+import java.util.function.Predicate;
 
 public class AsyncQueueHolder extends LifecycleAdapter {
 
@@ -29,15 +30,13 @@ public class AsyncQueueHolder extends LifecycleAdapter {
     public static final GraphCommand POISON = (graphDatabaseService, log1) -> {
     };
 
-    private final LogService logService;
-
     private final GraphDatabaseAPI graphDatabaseAPI;
 
     private final Log log;
 
     private final ThreadToStatementContextBridge threadToStatementContextBridge;
 
-    // contains GraphCommand instance with active transaction
+    // contains GraphCommand instances per each active transaction
     private ConcurrentMap<KernelTransaction, List<GraphCommand>> inboundGraphCommandsMap = new ConcurrentHashMap<>();
 
     // contains GraphCommand that are supposed to be processed, their originating transactions have been closed
@@ -52,7 +51,6 @@ public class AsyncQueueHolder extends LifecycleAdapter {
     public AsyncQueueHolder(GraphDatabaseAPI graphDatabaseAPI, LogService logService,
                             ThreadToStatementContextBridge threadToStatementContextBridge) {
         this.graphDatabaseAPI = graphDatabaseAPI;
-        this.logService = logService;
         this.threadToStatementContextBridge = threadToStatementContextBridge;
         this.log = logService.getUserLog(AsyncQueueHolder.class);
     }
@@ -67,7 +65,13 @@ public class AsyncQueueHolder extends LifecycleAdapter {
             kernelTransaction.registerCloseListener(txId -> {
                         Collection<GraphCommand> commands = inboundGraphCommandsMap.remove(kernelTransaction);
                         if ((commands != null) && (txId != -1)) {
-                            outboundQueue.addAll(commands);
+                            commands.forEach(cmd -> {
+                                try {
+                                    outboundQueue.put(cmd);
+                                } catch (InterruptedException e) {
+                                    throw new RuntimeException(e);
+                                }
+                            });
                         }
                     }
             );
@@ -85,20 +89,20 @@ public class AsyncQueueHolder extends LifecycleAdapter {
     public void stop() {
         if (!closed) {
             try {
-                while (!inboundGraphCommandsMap.isEmpty()) {
-                    Thread.sleep(10);
-                }
-
+                waitWhile(aVoid -> !inboundGraphCommandsMap.isEmpty());
                 isClosing = true;
                 outboundQueue.put(POISON);
-
-                while (isClosing) {
-                    Thread.sleep(10);
-                }
+                waitWhile(aVoid -> isClosing);
             } catch (InterruptedException e) {
                 throw new RuntimeException(e);
             }
             closed = true;
+        }
+    }
+
+    private void waitWhile(Predicate<Void> predicate) throws InterruptedException {
+        while (predicate.test(null)) {
+            Thread.sleep(10);
         }
     }
 

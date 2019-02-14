@@ -1,5 +1,53 @@
 # neo4j-async-actions
 
-This library helps neo4j developers to perform parts of their graph mutating action asyncronously.
+This library helps neo4j developers to perform parts of their graph mutating actions asynchronously.
 
-more docs tbd
+## the problem
+
+Consider a situation where concurrently different transaction try to create a new node with a relationship to a common
+existing node. This situation might cause lock contention. When creating the relationship a write lock is grabbed on the
+start node, the relationship and on the end node.
+
+If a concurrent transaction tries to link to the same node it needs to wait due to the existing write lock on the end node.
+
+Situations like this (and of course way more complex ones) are observed frequently in the wild when you try to import
+data into neo4j concurrently.
+
+## the solution
+
+`neo4j-async-action` allows for asynchronous creating/merging of relationships (and other actions). The action you want
+to perform asynchronously wrapped in a `GraphCommand` and added to a list of command on a per-transaction level - called the inbound list.
+
+After successfully committing a transaction the inbound list is moved into a blocking queue - the outbound queue. The
+very same outbound queue is a singleton shared by all transactions.
+
+The outbound queue is consumed by *one* single background thread that polls queue elements and executes them in batches.
+
+NOTE: be aware that due to the design you don't have any guarantees when the asynchronous queue elements are committed.
+In fact it's a eventual consistent approach.
+
+NOTE: the current implementation is not neo4j cluster aware. In case a leader switch happens contents of the outbound queue might get lost. I'm considering using a fault tolerant queue to prevent e.g. by using Kafka as outbound queue.
+
+## usage examples
+
+[source,cypher]
+----
+MATCH (a:Person{name:'Foo'}), (b:Person{name:'Bar'})
+CALL async.createRelationship(a, b, 'KNOWS')
+RETURN a,b
+----
+
+[source,cypher]
+----
+MATCH (a:Person{name:'Foo'}), (b:Person{name:'Bar'})
+CALL async.mergeRelationship(a, b, 'KNOWS')
+RETURN a,b
+----
+
+
+[source,cypher]
+----
+MATCH (a:Person{name:'Foo'}), (b:Person{name:'Bar'})
+CALL async.cypher("merge (a)-[:KNOWS]-(b)", {a:a, b,b})
+RETURN a,b
+----

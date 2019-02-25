@@ -40,7 +40,7 @@ RETURN a,b
 [source,cypher]
 ----
 MATCH (a:Person{name:'Foo'}), (b:Person{name:'Bar'})
-CALL async.mergeRelationship(a, b, 'KNOWS')
+CALL async.mergeRelationship(a, b, 'KNOWS', {since:'2019-01-01'})
 RETURN a,b
 ----
 

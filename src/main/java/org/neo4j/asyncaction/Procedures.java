@@ -1,9 +1,6 @@
 package org.neo4j.asyncaction;
 
-import org.neo4j.graphdb.Direction;
-import org.neo4j.graphdb.Node;
-import org.neo4j.graphdb.Relationship;
-import org.neo4j.graphdb.RelationshipType;
+import org.neo4j.graphdb.*;
 import org.neo4j.kernel.internal.GraphDatabaseAPI;
 import org.neo4j.logging.Log;
 import org.neo4j.procedure.Context;
@@ -49,12 +46,14 @@ public class Procedures {
             @Name(value = "relationshipProperties", defaultValue = "") Map<String, Object> relationshipProperties) {
         addToAsyncQueue((graphDatabaseService, log) -> {
             final Relationship relationship = startNode.createRelationshipTo(endNode, RelationshipType.withName(relationshipType));
-            if (relationshipProperties != null) {
-                for (String key : relationshipProperties.keySet()) {
-                    relationship.setProperty(key, relationshipProperties.get(key));
-                }
-            }
+            setAllProperties(relationship, relationshipProperties);
         });
+    }
+
+    private void setAllProperties(PropertyContainer propertyContainer, Map<String, Object> properties) {
+        if (properties != null) {
+            properties.entrySet().stream().forEach( entry -> propertyContainer.setProperty(entry.getKey(), entry.getValue()));
+        }
     }
 
     @Procedure(name = "async.mergeRelationship", mode = READ)
@@ -62,7 +61,9 @@ public class Procedures {
     public void asyncMergeRelationship(
             @Name("startNode") Node startNode,
             @Name("endNode") Node endNode,
-            @Name("relationshipType") String relationshipType) {
+            @Name("relationshipType") String relationshipType,
+            @Name(value = "identifiyingRelationshipProperties", defaultValue = "") Map<String, Object> identifiyingRelationshipProperties,
+            @Name(value = "relationshipProperties", defaultValue = "") Map<String, Object> relationshipProperties) {
 
         addToAsyncQueue((graphDatabaseService, log) -> {
             RelationshipType rt = RelationshipType.withName(relationshipType);
@@ -75,12 +76,19 @@ public class Procedures {
             final Direction direction = startNodeCheaper ? OUTGOING : INCOMING;
 
             boolean relationshipExists = StreamSupport.stream(cheaperNode.getRelationships(rt, direction).spliterator(), false)
-                    .anyMatch(relationship -> relationship.getOtherNode(cheaperNode).equals(expensiverNode));
-
+                    .anyMatch(relationship ->
+                            relationship.getOtherNode(cheaperNode).equals(expensiverNode)
+                            && relationshipMatchesAllProperties(relationship, identifiyingRelationshipProperties));
             if (!relationshipExists) {
-                startNode.createRelationshipTo(endNode, RelationshipType.withName(relationshipType));
+                final Relationship relationship = startNode.createRelationshipTo(endNode, RelationshipType.withName(relationshipType));
+                setAllProperties(relationship, identifiyingRelationshipProperties);
+                setAllProperties(relationship, relationshipProperties);
             }
         });
+    }
+
+    private boolean relationshipMatchesAllProperties(Relationship relationship, Map<String, Object> propertiesToMatch) {
+        return propertiesToMatch.entrySet().stream().allMatch(propertyKeyValue -> propertyKeyValue.getValue().equals(relationship.getProperty(propertyKeyValue.getKey(), null)));
     }
 
     @Procedure(name = "async.cypher", mode = READ)

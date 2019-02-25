@@ -195,7 +195,7 @@ public class ProceduresTests {
         boolean regularTermination = runWithExecutorService(1000, index -> db.execute("MERGE (dense:Person{id:'dense'}) \n" +
                 "    MERGE (rnd:Person{id:'person_' +toInt(rand()*1000)})\n" +
                 "    WITH dense, rnd \n" +
-                "    CALL async.mergeRelationship(rnd, dense, 'KNOWS') \n" +
+                "    CALL async.mergeRelationship(rnd, dense, 'KNOWS', {since:'2019-01-01'}) \n" +
                 "    RETURN dense, rnd"));
 
         assertTrue(regularTermination);
@@ -203,7 +203,8 @@ public class ProceduresTests {
         long count = Iterators.single(db.execute("MATCH (p:Person) RETURN count(p) AS c").columnAs("c"));
         assertTrue(count < 800);
 
-        count = Iterators.single(db.execute("MATCH (p:Person{id:'dense'}) RETURN size((p)<-[:KNOWS]-()) AS c").columnAs("c"));
+        count = Iterators.single(db.execute("MATCH (p:Person{id:'dense'}) RETURN size((p)<-[:KNOWS {since:'2019-01-01'}]-()) AS c").columnAs("c"));
+        assertTrue(count > 0);
         assertTrue(count < 800);
 
     }
@@ -246,6 +247,7 @@ public class ProceduresTests {
                             try {
                                 consumer.accept(finalI);
                             } catch (Exception e) {
+                                e.printStackTrace();
                                 throw new RuntimeException(e);
                             }
                         }

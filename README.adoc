@@ -40,10 +40,18 @@ RETURN a,b
 [source,cypher]
 ----
 MATCH (a:Person{name:'Foo'}), (b:Person{name:'Bar'})
-CALL async.mergeRelationship(a, b, 'KNOWS', {since:'2019-01-01'})
+CALL async.mergeRelationship(a, b, 'KNOWS', {since:'2019-01-01'},{},{})
 RETURN a,b
 ----
 
+`async.mergeRelationship` takes as parameters:
+
+1. the start node
+1. the end node
+1. relationship type
+1. identifying properties - those are used to determine if a relationship with these properties is already there
+1. on create properties: those are set when the relationship does not exist and is created
+1. on match properties: those are set in case the relationship does already exist.
 
 [source,cypher]
 ----

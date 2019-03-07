@@ -8,6 +8,7 @@ import org.neo4j.driver.v1.GraphDatabase;
 import org.neo4j.driver.v1.Session;
 import org.neo4j.graphdb.GraphDatabaseService;
 import org.neo4j.graphdb.Relationship;
+import org.neo4j.graphdb.Result;
 import org.neo4j.graphdb.Transaction;
 import org.neo4j.helpers.ListenSocketAddress;
 import org.neo4j.helpers.collection.Iterators;
@@ -189,7 +190,6 @@ public class ProceduresTests {
 
     @Test
     public void testConnectingToDenseNodeUsingAsyncMerge() {
-
         db.execute("CREATE INDEX ON :Person(id)");
         db.execute("MERGE (dense:Person{id:'dense'})");
         boolean regularTermination = runWithExecutorService(1000, index -> db.execute("MERGE (dense:Person{id:'dense'}) \n" +
@@ -206,7 +206,35 @@ public class ProceduresTests {
         count = Iterators.single(db.execute("MATCH (p:Person{id:'dense'}) RETURN size((p)<-[:KNOWS {since:'2019-01-01'}]-()) AS c").columnAs("c"));
         assertTrue(count > 0);
         assertTrue(count < 800);
+    }
 
+    @Test
+    public void testAsyncMergeRelationshipWithOnMatchProperties() {
+        Result result = db.execute("CREATE (a), (b) \n" +
+                "WITH a,b\n" +
+                "CALL async.mergeRelationship(a, b, 'KNOWS', {}, {count:1})\n" +
+                "RETURN id(a) AS a,id(b) AS b");
+
+        Map<String, Object> row = Iterators.single(result);
+        long idA = (long) row.get("a");
+        long idB = (long) row.get("b");
+        finishQueueAndWait();
+        assertCountPropertyOnSingleRelationship(1);
+
+        startQueue();
+        Iterators.single(db.execute("MATCH (a), (b) \n" +
+                "WHERE id(a)=$idA AND id(b)=$idB\n" +
+                "WITH a,b\n" +
+                "CALL async.mergeRelationship(a, b, 'KNOWS', {}, {}, {count:2})\n" +
+                "RETURN count(*)", MapUtil.map("idA", idA, "idB", idB)));
+        finishQueueAndWait();
+        assertCountPropertyOnSingleRelationship(2);
+    }
+
+    private void assertCountPropertyOnSingleRelationship(long expected) {
+        Result result = db.execute("MATCH ()-[r:KNOWS]->() RETURN r.count AS count");
+        long count = (long) Iterators.single(result).get("count");
+        assertEquals(expected, count);
     }
 
     @Test
@@ -267,6 +295,11 @@ public class ProceduresTests {
         asyncQueueHolder.stop();
         assertTrue(asyncQueueHolder.isQueueEmpty());
         assertTrue(asyncQueueHolder.isInBoundEmpty());
+    }
+
+    private void startQueue() {
+        AsyncQueueHolder asyncQueueHolder = db.getDependencyResolver().resolveDependency(AsyncQueueHolder.class);
+        asyncQueueHolder.start();
     }
 
 }

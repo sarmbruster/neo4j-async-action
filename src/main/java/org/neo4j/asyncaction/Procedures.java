@@ -9,6 +9,7 @@ import org.neo4j.procedure.Name;
 import org.neo4j.procedure.Procedure;
 
 import java.util.Map;
+import java.util.Optional;
 import java.util.stream.StreamSupport;
 
 import static org.neo4j.graphdb.Direction.INCOMING;
@@ -62,8 +63,10 @@ public class Procedures {
             @Name("startNode") Node startNode,
             @Name("endNode") Node endNode,
             @Name("relationshipType") String relationshipType,
-            @Name(value = "identifiyingRelationshipProperties", defaultValue = "") Map<String, Object> identifiyingRelationshipProperties,
-            @Name(value = "relationshipProperties", defaultValue = "") Map<String, Object> relationshipProperties) {
+            @Name(value = "identifyingRelationshipProperties", defaultValue = "") Map<String, Object> identifyingRelationshipProperties,
+            @Name(value = "onCreateProperties", defaultValue = "") Map<String, Object> onCreateProperties,
+            @Name(value = "onMatchProperties", defaultValue = "") Map<String, Object> onMatchProperties
+    ) {
 
         addToAsyncQueue((graphDatabaseService, log) -> {
             RelationshipType rt = RelationshipType.withName(relationshipType);
@@ -75,14 +78,16 @@ public class Procedures {
             final Node expensiverNode = startNodeCheaper ? endNode : startNode;
             final Direction direction = startNodeCheaper ? OUTGOING : INCOMING;
 
-            boolean relationshipExists = StreamSupport.stream(cheaperNode.getRelationships(rt, direction).spliterator(), false)
-                    .anyMatch(relationship ->
+            Optional<Relationship> optionalRelationship = StreamSupport.stream(cheaperNode.getRelationships(rt, direction).spliterator(), false)
+                    .filter(relationship ->
                             relationship.getOtherNode(cheaperNode).equals(expensiverNode)
-                            && relationshipMatchesAllProperties(relationship, identifiyingRelationshipProperties));
-            if (!relationshipExists) {
+                                    && relationshipMatchesAllProperties(relationship, identifyingRelationshipProperties)).findAny();
+            if (optionalRelationship.isPresent()) {
+                setAllProperties(optionalRelationship.get(), onMatchProperties);
+            } else {
                 final Relationship relationship = startNode.createRelationshipTo(endNode, RelationshipType.withName(relationshipType));
-                setAllProperties(relationship, identifiyingRelationshipProperties);
-                setAllProperties(relationship, relationshipProperties);
+                setAllProperties(relationship, identifyingRelationshipProperties);
+                setAllProperties(relationship, onCreateProperties);
             }
         });
     }

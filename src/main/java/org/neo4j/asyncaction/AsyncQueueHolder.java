@@ -80,6 +80,7 @@ public class AsyncQueueHolder extends LifecycleAdapter {
 
     @Override
     public void start() {
+        closed = false;
         startThreadToProcessOutbound();
     }
 
@@ -93,8 +94,10 @@ public class AsyncQueueHolder extends LifecycleAdapter {
                 waitWhile(aVoid -> isClosing);
             } catch (InterruptedException e) {
                 throw new RuntimeException(e);
+            } finally {
+                isClosing = false;
+                closed = true;
             }
-            closed = true;
         }
     }
 

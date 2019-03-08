@@ -108,7 +108,7 @@ public class ProceduresTests {
     @Test
     public void verifyPropertiesAreAddedTest() {
 
-        db.execute("CREATE (a), (b) WITH a,b UNWIND range(1,20) AS x CALL async.createRelationship(a, b, 'KNOWS', {test : 2}) RETURN a,b");
+        db.execute("CREATE (a), (b) WITH a,b UNWIND range(1,20) AS x CALL async.createRelationship(a, b, 'KNOWS', {test : 2}) RETURN a,b").close();
         finishQueueAndWait();
 
         for (Map<String, Object> result : Iterators.asIterable(db.execute("MATCH ()-[r:KNOWS]->() RETURN r"))) {
@@ -127,7 +127,7 @@ public class ProceduresTests {
     @Test
     public void shouldAsyncCreationOfRelationshipsWork() {
 
-        db.execute("CREATE (a), (b) WITH a,b UNWIND range(1,20) AS x CALL async.createRelationship(a, b, 'KNOWS', {}) RETURN a,b");
+        db.execute("CREATE (a), (b) WITH a,b UNWIND range(1,20) AS x CALL async.createRelationship(a, b, 'KNOWS', {}) RETURN a,b").close();
         finishQueueAndWait();
 
         long count = Iterators.single(db.execute("MATCH ()-[r:KNOWS]->() RETURN count(r) AS count").columnAs("count"));
@@ -142,7 +142,7 @@ public class ProceduresTests {
                 "WITH a,b\n" +
                 "UNWIND range(1,20) as x\n" +
                 "CALL async.cypher(\"with $start as start, $end as end create (start)-[:KNOWS]->(end)\", {start:a, end:b})\n" +
-                "RETURN a,b");
+                "RETURN a,b").close();
         finishQueueAndWait();
 
         long count = Iterators.single(db.execute("MATCH ()-[r:KNOWS]->() RETURN count(r) AS count").columnAs("count"));
@@ -178,7 +178,7 @@ public class ProceduresTests {
                 "    CREATE (rnd:Person{id:$id})\n" +
                 "    WITH dense, rnd \n" +
                 "    CALL async.createRelationship(rnd, dense, 'KNOWS', {}) \n" +
-                "    RETURN dense, rnd", Collections.singletonMap("id", "person_" + index)));
+                "    RETURN dense, rnd", Collections.singletonMap("id", "person_" + index)).close());
         assertTrue(regularTermination);
 
         long count = Iterators.single(db.execute("MATCH (p:Person) RETURN count(p) AS c").columnAs("c"));
@@ -196,7 +196,7 @@ public class ProceduresTests {
                 "    MERGE (rnd:Person{id:'person_' +toInt(rand()*1000)})\n" +
                 "    WITH dense, rnd \n" +
                 "    CALL async.mergeRelationship(rnd, dense, 'KNOWS', {since:'2019-01-01'}) \n" +
-                "    RETURN dense, rnd"));
+                "    RETURN dense, rnd").close());
 
         assertTrue(regularTermination);
 

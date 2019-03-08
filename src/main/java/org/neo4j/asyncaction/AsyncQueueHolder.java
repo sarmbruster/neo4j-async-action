@@ -4,10 +4,10 @@ import org.neo4j.graphdb.Transaction;
 import org.neo4j.kernel.api.KernelTransaction;
 import org.neo4j.kernel.configuration.Config;
 import org.neo4j.kernel.impl.core.ThreadToStatementContextBridge;
-import org.neo4j.kernel.impl.logging.LogService;
 import org.neo4j.kernel.internal.GraphDatabaseAPI;
 import org.neo4j.kernel.lifecycle.LifecycleAdapter;
 import org.neo4j.logging.Log;
+import org.neo4j.logging.internal.LogService;
 
 import java.util.ArrayList;
 import java.util.Collection;
@@ -54,7 +54,7 @@ public class AsyncQueueHolder extends LifecycleAdapter {
     }
 
     public void add(GraphCommand command) {
-        KernelTransaction kernelTransaction = threadToStatementContextBridge.getTopLevelTransactionBoundToThisThread(false);
+        KernelTransaction kernelTransaction = threadToStatementContextBridge.getKernelTransactionBoundToThisThread(false);
         Collection<GraphCommand> graphCommands = inboundGraphCommandsMap.computeIfAbsent(kernelTransaction, (id) -> new ArrayList<>());
         if (graphCommands.isEmpty()) {
             log.debug("registering close listener for tx %s", kernelTransaction.toString());

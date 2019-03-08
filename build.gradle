@@ -19,7 +19,7 @@ sourceCompatibility=JavaVersion.VERSION_1_8
 targetCompatibility=JavaVersion.VERSION_1_8
 
 ext {
-    neo4jVersion = "3.4.12"
+    neo4jVersion = "3.5.3"
     neo4jClientVersion = "1.7.2"
 }
 
@@ -33,9 +33,11 @@ dependencies {
     testCompile group: 'org.hamcrest', name: 'hamcrest-core', version: '1.3'
     testCompile group: 'org.hamcrest', name: 'hamcrest-library', version: '1.3'
     testCompile "org.neo4j.driver:neo4j-java-driver:$neo4jClientVersion"
+    testCompile group: 'org.neo4j.community', name: 'it-test-support', version: neo4jVersion
+
 }
 
-version = "0.2.1"
+version = "0.2.1-neo4j35"
 group = "org.neo4j.asyncaction"
 
 test {
